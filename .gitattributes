@@ -4,4 +4,14 @@
 *.sh text eol=lf
 *.bat text eol=crlf
 
+# YAML / JSON / Markdown / lockfiles must stay LF for cross-platform builds
+# (pnpm lockfile integrity, GitHub diff cleanliness, Linux reviewer sanity)
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.lock text eol=lf
+*.tsbuildinfo text eol=lf
+
+# LFS for binary onnx
 *.onnx filter=lfs diff=lfs merge=lfs -text
