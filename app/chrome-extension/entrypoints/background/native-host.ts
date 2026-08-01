@@ -489,6 +489,90 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
 }
 
 /**
+ * Forward a `file_operation` request to the native host and wait for the response.
+ *
+ * Why a direct helper (not `chrome.runtime.sendMessage` + broadcast):
+ * - The previous pattern posted `forward_to_native` and listened on
+ *   `chrome.runtime.onMessage` for `file_operation_response`. In MV3 service workers,
+ *   when the response is fired from inside the native port `onMessage` handler and
+ *   broadcast back into the same SW via `chrome.runtime.sendMessage`, the message can
+ *   sit in the SW message queue and never reach the awaiting listener before MCP
+ *   server-side 20s timeout. Empirically observed: native host itself completes in
+ *   ~100ms, but the full chain timed out at 20000ms with file never written.
+ * - This helper listens on `nativePort.onMessage` directly (Port.onMessage is reliable
+ *   and synchronous within the SW), correlates via `responseToRequestId`, and returns
+ *   a Promise that resolves with the result payload. No broadcast, no race.
+ *
+ * Returns:
+ *   - `{ success: true, filePath, size }` on success
+ *   - `{ success: false, error }` on native-host reported failure
+ *   - throws Error on timeout / native-port-disconnected
+ */
+export function forwardFileOperationToNative(
+  payload: any,
+  options: { timeoutMs?: number; requestId?: string } = {},
+): Promise<{ success: boolean; filePath?: string; size?: number; error?: string }> {
+  const targetPort = nativePort;
+  if (!targetPort) {
+    return Promise.reject(new Error('Native host not connected'));
+  }
+  const requestId =
+    options.requestId || `file-op-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  const timeoutMs = options.timeoutMs ?? 30_000;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const handleMessage = (message: any) => {
+      if (settled) return;
+      if (
+        message?.type === 'file_operation_response' &&
+        message.responseToRequestId === requestId
+      ) {
+        settled = true;
+        targetPort.onMessage.removeListener(handleMessage);
+        clearTimeout(timer);
+        if (message.payload?.success) {
+          resolve({
+            success: true,
+            filePath: message.payload.filePath,
+            size: message.payload.size,
+          });
+        } else {
+          resolve({
+            success: false,
+            error: message.payload?.error || message.error || 'Unknown error from native host',
+          });
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      targetPort.onMessage.removeListener(handleMessage);
+      reject(new Error(`File operation timed out after ${timeoutMs}ms (requestId=${requestId})`));
+    }, timeoutMs);
+
+    targetPort.onMessage.addListener(handleMessage);
+    try {
+      targetPort.postMessage({
+        type: 'file_operation',
+        requestId,
+        payload,
+      });
+    } catch (err) {
+      settled = true;
+      targetPort.onMessage.removeListener(handleMessage);
+      clearTimeout(timer);
+      reject(
+        err instanceof Error ? err : new Error(`nativePort.postMessage failed: ${String(err)}`),
+      );
+    }
+  });
+}
+
+/**
  * Initialize native host listeners and load initial state
  */
 export const initNativeHostListener = () => {

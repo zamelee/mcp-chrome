@@ -42,6 +42,13 @@ if (typeof globalThis.chrome === 'undefined') {
       onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
       onCreated: { addListener: vi.fn(), removeListener: vi.fn() },
       onUpdated: { addListener: vi.fn(), removeListener: vi.fn() },
+      // v1.7.3 (heartbeat race fix): bridge-control.ts attaches these at module
+      // load. Anything that transitively imports native-host.ts (screenshot.ts,
+      // file-upload.ts, performance.ts, etc.) would crash without these mocks.
+      onAttached: { addListener: vi.fn(), removeListener: vi.fn() },
+      onDetached: { addListener: vi.fn(), removeListener: vi.fn() },
+      onReplaced: { addListener: vi.fn(), removeListener: vi.fn() },
+      onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
     },
     webRequest: {
       onBeforeRequest: { addListener: vi.fn(), removeListener: vi.fn() },

@@ -2,6 +2,7 @@ import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from '@ethanwilkins/chrome-mcp-shared-2026';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
+import { forwardFileOperationToNative } from '../../native-host';
 import {
   canvasToDataURL,
   createImageBitmapFromUrl,
@@ -116,10 +117,10 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
     const {
       name = 'screenshot',
       selector,
-      storeBase64 = true,    // default: return base64 directly, no Save As dialog
+      storeBase64 = true, // default: return base64 directly, no Save As dialog
       fullPage = false,
-      savePng = false,       // default: do not trigger chrome.downloads.saveAs
-      savePath,              // explicit disk write goes via bridge Node fs, bypasses Chrome download API
+      savePng = false, // default: do not trigger chrome.downloads.saveAs
+      savePath, // explicit disk write goes via bridge Node fs, bypasses Chrome download API
     } = args;
 
     console.log(`Starting screenshot with options:`, args);
@@ -420,63 +421,46 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
    * Save screenshot base64 to an absolute filesystem path via the native messaging host.
    *
    * Protocol chain (per AGENTS.md §0b.7.7):
-   *   this method → chrome.runtime.sendMessage('forward_to_native')
-   *     → background listener (native-host.ts) → nativePort.postMessage('file_operation')
+   *   this method → forwardFileOperationToNative(payload)
+   *     → native-host.ts: nativePort.onMessage listener + nativePort.postMessage('file_operation')
    *       → native-server (file-handler.ts: saveBase64File with filePath arg)
    *         → fs.writeFileSync(tmp) + fs.renameSync(tmp, filePath)  // atomic write-rename
    *
-   * Returns {filePath, size} on success, or null on timeout/connection failure.
+   * Direct nativePort.onMessage correlation (NOT chrome.runtime.sendMessage broadcast)
+   * to avoid MV3 SW message-queue race that previously caused 20s+ timeouts. See
+   * forwardFileOperationToNative in native-host.ts for the full rationale.
+   *
+   * Returns {filePath, size} on success, or null on timeout / native-host failure.
    * 30s timeout matches file-upload.ts convention.
    */
   private _saveViaNativeHost(
     base64Data: string,
     savePath: string,
   ): Promise<{ filePath: string; size: number } | null> {
-    return new Promise((resolve) => {
-      const requestId = `screenshot-save-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const timeout = setTimeout(() => {
-        console.error(`[screenshot-save] Native host save request timed out (30s): savePath=${savePath}`);
-        chrome.runtime.onMessage.removeListener(handleMessage);
-        resolve(null);
-      }, 30000);
-
-      const handleMessage = (message: any) => {
-        if (
-          message.type === 'file_operation_response' &&
-          message.responseToRequestId === requestId
-        ) {
-          clearTimeout(timeout);
-          chrome.runtime.onMessage.removeListener(handleMessage);
-          if (message.payload?.success && message.payload?.filePath) {
-            resolve({
-              filePath: message.payload.filePath,
-              size: message.payload.size ?? 0,
-            });
-          } else {
-            console.error(
-              `[screenshot-save] Native host returned failure:`,
-              message.payload?.error ?? 'unknown error',
-            );
-            resolve(null);
-          }
+    return forwardFileOperationToNative(
+      {
+        action: 'prepareFile',
+        base64Data,
+        filePath: savePath,
+      },
+      { timeoutMs: 30_000 },
+    )
+      .then((result) => {
+        if (result.success && result.filePath) {
+          return { filePath: result.filePath, size: result.size ?? 0 };
         }
-      };
-
-      chrome.runtime.onMessage.addListener(handleMessage);
-
-      chrome.runtime.sendMessage({
-        type: 'forward_to_native',
-        message: {
-          type: 'file_operation',
-          requestId,
-          payload: {
-            action: 'prepareFile',
-            base64Data,
-            filePath: savePath,
-          },
-        },
+        console.error(
+          '[screenshot-save] Native host returned failure:',
+          result.error ?? 'unknown error',
+        );
+        return null;
+      })
+      .catch((err) => {
+        console.error(
+          `[screenshot-save] Native host save failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
       });
-    });
   }
 
   /**
