@@ -58,14 +58,16 @@ process.on('error', (error) => {
   process.exit(1);
 });
 
-// Handle process signals and uncaught exceptions
-process.on('SIGINT', () => {
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  process.exit(0);
-});
+// Handle process signals and uncaught exceptions (Plan Z cont'd: ignore all
+// signals so Chrome disconnecting its native-messaging pipes does not take
+// the bridge down. Stop the bridge only via Task Manager / Stop-Process.)
+const ignoreSignal = () => {
+  console.log('[bridge] Signal received; bridge ignores signals and stays up.');
+};
+process.on('SIGINT', ignoreSignal);
+process.on('SIGTERM', ignoreSignal);
+process.on('SIGHUP', ignoreSignal);
+process.on('SIGBREAK', ignoreSignal);
 
 process.on('exit', (code) => {});
 
