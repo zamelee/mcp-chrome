@@ -373,8 +373,16 @@ export class NativeMessagingHost {
    * Send error message to Chrome extension (mainly for sending non-request-response type errors)
    */
   private sendError(errorMessage: string): void {
+    // IMPORTANT: do NOT log this to console / stderr here. The native-messaging
+    // host child uses stdout strictly for length-prefixed JSON frames; even
+    // after fixing the upstream console.log bugs in server/index.ts and
+    // cleanup(), adding noisy stderr writes here would still be wrong because
+    // sendError is reachable from the protocol handler itself (e.g. invalid
+    // JSON, oversized frame), and corrupting the byte stream mid-frame can
+    // tear down Chrome's host child. Use the structured ERROR_FROM_NATIVE_HOST
+    // message type so the extension's background handler decides what to do.
     this.sendMessage({
-      type: NativeMessageType.ERROR_FROM_NATIVE_HOST, // Use more explicit type
+      type: NativeMessageType.ERROR_FROM_NATIVE_HOST,
       payload: { message: errorMessage },
     });
   }
@@ -390,7 +398,12 @@ export class NativeMessagingHost {
       pending.reject(new Error('Native host is shutting down or Chrome disconnected.'));
     });
     this.pendingRequests.clear();
-    console.log('[native-messaging-host] Connection closed; bridge shutting down.');
+    // CRITICAL: do NOT use console.log here. The native-messaging host child
+    // uses stdout for length-prefixed JSON frames only; any plain text written
+    // to stdout corrupts the protocol stream and triggers Chrome to close the
+    // host child prematurely on the next connectNative retry. stderr is
+    // captured by run_host.bat to native_host_stderr_*.log.
+    process.stderr.write('[native-messaging-host] Connection closed; bridge shutting down.\n');
 
     // REVERTED Plan Y: stop the HTTP server and exit. Reason: Chrome's native-
     // messaging host child has the SAME lifetime as its parent render process.

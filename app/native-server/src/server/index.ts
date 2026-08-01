@@ -595,7 +595,12 @@ export class Server {
     // Plan 1.1: re-roll bridge epoch per process start. Clients use this to detect
     // that the bridge was restarted (e.g. after extension reload).
     this.bridgeInstanceId = randomUUID();
-    console.log(`[bridge] new epoch: ${this.bridgeInstanceId}`);
+    // CRITICAL: native-messaging host child uses stdout for length-prefixed JSON
+    // frames only. console.log writes to stdout and corrupts the protocol stream
+    // (Chrome reads the leading bytes as a length header, sees an invalid value,
+    // and tears down the host child immediately). Always use stderr here, and
+    // mirror this pattern for any other logs reachable from server.start().
+    process.stderr.write(`[bridge] new epoch: ${this.bridgeInstanceId}\n`);
     if (!this.nativeHost) {
       this.nativeHost = nativeHost;
     } else if (this.nativeHost !== nativeHost) {
