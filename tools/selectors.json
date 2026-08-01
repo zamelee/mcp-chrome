@@ -1,0 +1,97 @@
+{
+  "_meta": {
+    "description": "CSS selector fallbacks for chatgpt.com ProseMirror composer. Patch 4 of 6 from agentify-sh/desktop deep-dive. Adapted from agentify-sh/desktop (algorithm only, public domain). Each element lists 5-13 fallback selectors; the consumer merges them comma-separated into a single CSS query that matches the FIRST element on the page. Add new fallbacks to the END of each list to keep the priority order stable.",
+    "version": "1.0.0",
+    "vendor": "chatgpt.com",
+    "framework": "ProseMirror",
+    "overridePath": "~/.codex/selectors.override.json (per user / per environment)",
+    "schema": "Each element has 'fallbacks' (ordered list). The first entry is treated as the canonical primary container used for composer composition; comma-joining all fallbacks produces the multi-fallback chain (used by tools that resolve via querySelectorAll and pick first)."
+  },
+  "promptTextarea": {
+    "description": "Main composer where user types the prompt",
+    "fallbacks": [
+      "#prompt-textarea",
+      "rich-textarea .ql-editor[contenteditable=true]",
+      "div.ql-editor[data-placeholder]",
+      "div.ProseMirror[contenteditable=true]",
+      "form div[contenteditable=true]",
+      "div[contenteditable=true][role=textbox]",
+      "div[contenteditable=true][aria-label*='Message' i]",
+      "div[contenteditable=true][aria-label*='Send a message' i]",
+      "main div[contenteditable=true]",
+      "textarea[name='prompt']",
+      "textarea[aria-label*='prompt' i]",
+      "textarea[placeholder*='message' i]",
+      "form textarea"
+    ]
+  },
+  "sendButton": {
+    "description": "Button that submits the prompt",
+    "fallbacks": [
+      "button[data-testid='send-button']",
+      "button[data-testid*='send' i]",
+      "button[aria-label='Send prompt']",
+      "button[aria-label*='Send' i]",
+      "button[type='submit'][aria-label*='send' i]",
+      "form button[type='submit']",
+      "form button[aria-label*='Send' i]",
+      "button.composer-submit-button",
+      "#composer-submit-button",
+      "div[role='toolbar'] button:last-child",
+      "main button:has(svg[aria-label*='send' i])"
+    ]
+  },
+  "stopButton": {
+    "description": "Stop generating button (visible while assistant is streaming)",
+    "fallbacks": [
+      "button[data-testid='stop-button']",
+      "button[aria-label='Stop generating']",
+      "button[aria-label*='Stop' i][aria-label*='generating' i]",
+      "button[aria-label*='stop generating' i]",
+      "button:has(svg[aria-label*='stop' i])",
+      "form button[aria-label*='stop' i]"
+    ]
+  },
+  "assistantMessage": {
+    "description": "Container + inline elements of the assistant's reply",
+    "fallbacks": [
+      "[data-message-author-role='assistant']",
+      "[data-message-author-role='assistant'] [data-message-id]",
+      "div[data-message-author-role='assistant']",
+      "[data-author='assistant']",
+      "[data-role='assistant']",
+      ".assistant-message",
+      "article[data-author='assistant']",
+      "main article"
+    ]
+  },
+  "composerRoot": {
+    "description": "Outer container that wraps the prompt textarea + send button",
+    "fallbacks": [
+      "form",
+      "form[data-type='unified-composer']",
+      "main form",
+      "div[data-message-author-role='user']",
+      "main > div > form"
+    ]
+  },
+  "_fieldSelectors": {
+    "description": "Per-element sub-selectors for splitting assistant reply into text + code blocks. Used by extract_reply / extract_code_blocks.",
+    "fallbacks": {
+      "replyText": [
+        "p",
+        "pre",
+        "li",
+        "h1",
+        "h2",
+        "h3",
+        "h4"
+      ],
+      "codeBlocks": [
+        "pre code",
+        "pre",
+        "code"
+      ]
+    }
+  }
+}
