@@ -391,18 +391,17 @@ export class NativeMessagingHost {
     });
     this.pendingRequests.clear();
 
-    if (this.associatedServer && this.associatedServer.isRunning) {
-      this.associatedServer
-        .stop()
-        .then(() => {
-          process.exit(0);
-        })
-        .catch(() => {
-          process.exit(1);
-        });
-    } else {
-      process.exit(0);
-    }
+    // Plan Y (reload-fix close-the-loop): **do not** stop the HTTP server or
+    // exit on Chrome disconnect. The bridge is the durable process; the
+    // extension connection is transient. When the user reloads the extension
+    // (chrome://extensions refresh, dev rebuild, etc.) Chrome closes the
+    // native-messaging stdin pipe, which used to tear the bridge down. With
+    // this change, the bridge keeps listening on 12306 so existing MCP
+    // sessions and in-flight stdio bridge clients keep working.
+    //
+    // If we ever want a true teardown (e.g. SIGINT, manual stop), listen for
+    // SIGTERM/SIGINT at the process level — cleanup() is no longer terminal.
+    console.log('[native-messaging-host] Connection closed; bridge stays up.');
   }
 }
 
