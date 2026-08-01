@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { NativeMessageType } from '@ethanwilkins/chrome-mcp-shared-2026';
 import { TIMEOUTS } from './constant';
 import fileHandler from './file-handler';
+import { shouldAllowPopup, ShouldAllowPopupInput } from './server/popup-gate';
 
 interface PendingRequest {
   resolve: (value: any) => void;
@@ -32,6 +33,22 @@ export class NativeMessagingHost {
       lastActivityAt: this.lastActivityAt?.toISOString() ?? null,
       lastSuccessAt: this.lastSuccessAt?.toISOString() ?? null,
     };
+  }
+
+  /**
+   * Gate a browser popup URL against the popup-policy. The Chrome extension
+   * background script can call this before deciding whether to allow an OAuth
+   * popup to open (e.g. chatgpt.com -> Google SSO -> about:blank -> Google).
+   *
+   * Returns true iff the popup URL is from a supported SSO provider for the
+   * given vendor id, or the popup is an OAuth pre-open about:blank whose
+   * opener is a vendor host.
+   *
+   * Adapted from agentify-sh/desktop popup-policy.mjs (MPL-2.0). See
+   * server/popup-gate.ts for the gate implementation and test matrix.
+   */
+  public evaluatePopupGate(input: ShouldAllowPopupInput): boolean {
+    return shouldAllowPopup(input);
   }
 
   public setServer(serverInstance: Server): void {
