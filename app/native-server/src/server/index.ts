@@ -34,6 +34,16 @@ import { TOOL_SCHEMAS } from '@ethanwilkins/chrome-mcp-shared-2026';
 import packageJson from '../../package.json';
 import { getRecentToolCalls } from '../mcp/register-tools';
 import { NativeMessageType } from '@ethanwilkins/chrome-mcp-shared-2026';
+import { randomUUID as _randUuid } from 'node:crypto';
+import {
+  SessionExpiredError,
+  TabGoneError,
+  assertRuntime,
+  assertTab,
+  assertTarget,
+  safetyLevelFor,
+  SafetyLevel,
+} from '../tool-safety';
 
 // ============================================================
 // Types
@@ -43,6 +53,18 @@ interface ExtensionRequestPayload {
   data?: unknown;
 }
 
+/**
+ * Plan 1.3: per-extension connection state tracked by the bridge.
+ * `lastHeartbeat` is updated by the extension's keepalive ping.
+ * `liveTargets` is the live CDP target set; refresh on each heartbeat.
+ */
+export interface ExtensionConnection {
+  extensionId: string;
+  version: string;
+  connectedAt: number;
+  lastHeartbeat: number;
+  liveTargets: Set<string>;
+}
 type McpTransport = StreamableHTTPServerTransport | SSEServerTransport;
 interface McpSession {
   transport: McpTransport;
@@ -51,7 +73,7 @@ interface McpSession {
   activeRequests: number;
   lastError: string | null;
 }
-const SESSION_TTL_MS = 24 * 60 * 60_000;  // 24h, idle session reclaimed; clients can re-init seamlessly (initialize accepted with stale sid)
+const SESSION_TTL_MS = 24 * 60 * 60_000; // 24h, idle session reclaimed; clients can re-init seamlessly (initialize accepted with stale sid)
 
 // ============================================================
 // Server Class
@@ -122,6 +144,10 @@ export class Server {
 
     // MCP routes
     this.setupMcpRoutes();
+
+    // Plan 1.3: bridge <-> extension control plane (register / heartbeat / error format).
+    // Separate from /mcp so that lifecycle signals don't pollute MCP tool traffic.
+    this.setupInternalRoutes();
   }
 
   // ============================================================
@@ -403,6 +429,174 @@ export class Server {
         }
       }
     });
+  }
+
+  // ============================================================
+  // Internal Control Routes (Plan 1.3)
+  // ============================================================
+  //
+  // Lightweight control plane between the Chrome extension and the bridge. These
+  // endpoints let the extension publish its CDP target snapshot to the bridge so
+  // that the tool preflight (Plan 1.4) can detect "extension reloaded" without
+  // silently corrupting ongoing tool calls.
+  //
+  // Wire shape:
+  //   extension -> POST /internal/register     { extensionId, version, liveTargets }
+  //   extension -> POST /internal/heartbeat    { extensionId, liveTargets }   (every ~60s)
+  //
+  // Both endpoints reply with the current `bridgeInstanceId` so the extension
+  // can detect that the bridge was restarted (e.g. after a reload of the
+  // extension itself caused the bridge to exit).
+
+  private setupInternalRoutes(): void {
+    type RegisterBody = {
+      extensionId?: unknown;
+      version?: unknown;
+      liveTargets?: unknown;
+    };
+
+    this.fastify.post('/internal/register', async (request, reply) => {
+      const body = (request.body ?? {}) as RegisterBody;
+      const extensionId = typeof body.extensionId === 'string' ? body.extensionId : '';
+      const version = typeof body.version === 'string' ? body.version : 'unknown';
+      const liveTargets = Array.isArray(body.liveTargets)
+        ? body.liveTargets.filter((t): t is string => typeof t === 'string')
+        : [];
+
+      if (!extensionId) {
+        reply.code(HTTP_STATUS.BAD_REQUEST).send({
+          error: 'INVALID_BODY',
+          message: 'extensionId (string) is required',
+        });
+        return;
+      }
+
+      const conn = this.recordExtensionConnection(extensionId, {
+        version,
+        liveTargets,
+        markHeartbeat: true,
+      });
+      console.log(
+        `[bridge] extension registered: id=${extensionId} version=${version} ` +
+          `targets=${conn.liveTargets.size} epoch=${this.bridgeInstanceId}`,
+      );
+      reply.code(HTTP_STATUS.OK).send({
+        success: true,
+        bridgeInstanceId: this.bridgeInstanceId,
+        serverStartedAt: this.startedAt,
+      });
+    });
+
+    type HeartbeatBody = {
+      extensionId?: unknown;
+      liveTargets?: unknown;
+    };
+
+    this.fastify.post('/internal/heartbeat', async (request, reply) => {
+      const body = (request.body ?? {}) as HeartbeatBody;
+      const extensionId = typeof body.extensionId === 'string' ? body.extensionId : '';
+      const liveTargets = Array.isArray(body.liveTargets)
+        ? body.liveTargets.filter((t): t is string => typeof t === 'string')
+        : [];
+
+      if (!extensionId) {
+        reply.code(HTTP_STATUS.BAD_REQUEST).send({
+          error: 'INVALID_BODY',
+          message: 'extensionId (string) is required',
+        });
+        return;
+      }
+
+      const existing = this.extensionConnections.get(extensionId);
+      if (!existing) {
+        // Heartbeat arrived before the extension ever called /internal/register.
+        // Tell it to re-register so we can attach a fresh heartbeat window.
+        reply.code(HTTP_STATUS.OK).send({
+          success: false,
+          reason: 'unknown_extension',
+          bridgeInstanceId: this.bridgeInstanceId,
+        });
+        return;
+      }
+
+      const conn = this.recordExtensionConnection(extensionId, {
+        version: existing.version,
+        liveTargets,
+        markHeartbeat: true,
+      });
+      reply.code(HTTP_STATUS.OK).send({
+        success: true,
+        bridgeInstanceId: this.bridgeInstanceId,
+        serverStartedAt: this.startedAt,
+        liveTargetCount: conn.liveTargets.size,
+      });
+    });
+  }
+
+  /**
+   * Upsert an ExtensionConnection entry. Used by both /internal/register and
+   * /internal/heartbeat so they share one shape of state mutation. Existing
+   * connections preserve `connectedAt`; only `lastHeartbeat` and `liveTargets`
+   * are refreshed on a heartbeat. `version` is refreshed on register.
+   */
+  private recordExtensionConnection(
+    extensionId: string,
+    opts: { version?: string; liveTargets: string[]; markHeartbeat: boolean },
+  ): ExtensionConnection {
+    const now = Date.now();
+    const existing = this.extensionConnections.get(extensionId);
+    const conn: ExtensionConnection = {
+      extensionId,
+      version: opts.version ?? existing?.version ?? 'unknown',
+      connectedAt: existing?.connectedAt ?? now,
+      lastHeartbeat: opts.markHeartbeat ? now : (existing?.lastHeartbeat ?? now),
+      liveTargets: new Set(opts.liveTargets),
+    };
+    this.extensionConnections.set(extensionId, conn);
+    return conn;
+  }
+
+  /**
+   * Public helper for Plan 1.4 (tool preflight). Returns the freshest
+   * ExtensionConnection by `lastHeartbeat`, or null if no extension has
+   * registered yet. We snapshot the Set so callers can iterate without
+   * worrying about concurrent mutation by a heartbeat.
+   */
+  public getLatestExtensionConnection(): ExtensionConnection | null {
+    let latest: ExtensionConnection | null = null;
+    for (const conn of this.extensionConnections.values()) {
+      if (!latest || conn.lastHeartbeat > latest.lastHeartbeat) {
+        latest = conn;
+      }
+    }
+    return latest;
+  }
+
+  /**
+   * Public helper for Plan 1.4 (tool preflight error formatting). Produces the
+   * MCP tool-result envelope that signals "your CDP/tab binding is gone; the
+   * extension was reloaded" so the client re-initializes instead of retrying.
+   *
+   * Wire format is intentionally JSON-in-text (not HTTP 400) so existing MCP
+   * clients that don't yet know the error code still surface a useful message
+   * to the LLM. The structured `{code, recoverable, message}` lets newer
+   * clients switch on the code and skip retries.
+   */
+  public formatToolError(
+    err: SessionExpiredError | TabGoneError,
+    toolName: string,
+  ): { isError: true; content: Array<{ type: 'text'; text: string }> } {
+    const payload = {
+      code: err.code,
+      recoverable: err.recoverable,
+      toolName,
+      message: err.message,
+      bridgeInstanceId: this.bridgeInstanceId,
+    };
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify(payload) }],
+    };
   }
 
   // ============================================================
