@@ -55,6 +55,17 @@
 
 查看 [完整更新日志](docs/CHANGELOG.md) 了解所有版本变更。
 
+## 📢 v1.7.3 更新内容
+
+> **修了 tab-not-in-live-set 的 60s race condition** - Plan 1.4 preflight 检查 `conn.liveTargets.has(tabId)`,但 heartbeat 每 60s 一次,所以任何 bridge 工具新开的 tab 最多要等 60s 才会被 preflight 接受。典型场景:`chrome_network_capture` 开新 tab,立刻 `chrome_switch_tab`,收到 `Tab N not in live set` SESSION_EXPIRED。修复:extension 在 module 加载时注册 `chrome.tabs.onCreated / onRemoved / onAttached / onDetached / onReplaced` 5 个 listener,任一触发立即 heartbeat (ms 级),bridge 一次 round-trip 内就能看到新 tabId。
+>
+> - 🔄 **attach-once 模式** - listeners 在 module 加载时一次性注册,handler 内用 `state.timer != null` guard 防止未激活就 fire;不会因为 startHeartbeat 重复调用而 listener 累积。
+> - 📋 **MV3 SW lifecycle 处理** - 文档说明:SW 睡眠期间事件会被 MV3 丢弃 (不排队);SW 唤醒时 listeners 重新 attach + initial heartbeat 抓取当前 tab set,覆盖此 case。
+> - 🔍 **extension 显示版本同步到 1.7.3** - rebuild .output/chrome-mv3 后 manifest.json version 字段已更新 (Load unpacked 后 popup 显示的就是新版本号)。
+> - ✅ **Jest 55/55 + Vitest 5/5 全绿**
+
+查看 [完整更新日志](docs/CHANGELOG.md) 了解所有版本变更。
+
 ---
 
 ## 📢 v1.6.1 更新内容

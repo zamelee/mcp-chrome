@@ -55,6 +55,17 @@ See the [full changelog](docs/CHANGELOG.md) for all version changes.
 
 See the [full changelog](docs/CHANGELOG.md) for all version changes.
 
+## 📢 What is New in v1.7.3
+
+> **Fixed 60s tab-not-in-live-set race condition** - Plan 1.4 preflight checks `conn.liveTargets.has(tabId)` but heartbeat fires only every 60s, so any tab opened via a bridge tool was invisible to preflight for up to 60s. Typical trigger: `chrome_network_capture` opens a new tab, immediate `chrome_switch_tab` returns SESSION_EXPIRED `Tab N not in live set`. Fix: extension registers `chrome.tabs.onCreated / onRemoved / onAttached / onDetached / onReplaced` listeners at module load; each fires an immediate heartbeat so the bridge sees the new tabId within one round-trip (< 100ms) instead of up to 60s later.
+>
+> - 🔄 **attach-once pattern** - listeners attached at module load (not inside startHeartbeat) to avoid accumulation across heartbeat restarts; handler guarded by `state.timer != null` to be a no-op before the heartbeat loop is active.
+> - 📋 **MV3 SW lifecycle** - documented: events that fire while the SW is asleep are dropped (MV3 does not queue), but the next SW wakeup re-attaches listeners at module load and the initial heartbeat captures the current tab set, so the SW-asleep case is also handled correctly.
+> - 🔍 **extension popup version sync to 1.7.3** - rebuild .output/chrome-mv3 so manifest.json version field shows the new number after Load Unpacked.
+> - ✅ **Jest 55/55 + Vitest 5/5 green**
+
+See the [full changelog](docs/CHANGELOG.md) for all version changes.
+
 ---
 
 ## 📢 What's New in v1.6.1

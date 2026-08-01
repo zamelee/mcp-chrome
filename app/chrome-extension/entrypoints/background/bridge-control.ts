@@ -114,6 +114,37 @@ function stopHeartbeat(): void {
   }
 }
 
+// ===========================================================================
+// Tab event listeners (v1.7.3 - Plan 2.3 follow-up)
+// ===========================================================================
+// Without these, bridge preflight (Plan 1.4) hits `Tab N not in live set`
+// SESSION_EXPIRED for any tab opened via a bridge tool until the next 60s
+// heartbeat cycle includes the new tabId. Fix: trigger an immediate
+// heartbeat on tab lifecycle events so the bridge sees the new tabId
+// within milliseconds (one round-trip), not up to 60s later.
+//
+// MV3 SW lifecycle note: chrome.tabs.* events that fire while the SW
+// is asleep are dropped (MV3 does not queue events). When the SW wakes
+// up, the listeners re-attach at module load and the initial heartbeat
+// captures the current tab set. This is fine because the bridge
+// preflight only fires after onBridgeStarted() which kicks off register
+// + initial heartbeat synchronously.
+//
+// We attach listeners at module load (not inside startHeartbeat) because
+// chrome.tabs.* listeners accumulate across calls -- addListener without
+// removeListener would compound if startHeartbeat is called repeatedly.
+// Attach-once + active-flag-check is the safest pattern.
+function triggerImmediateHeartbeatIfActive(): void {
+  if (!state.timer) return; // heartbeat not active, skip
+  void doHeartbeat();
+}
+
+chrome.tabs.onCreated.addListener(triggerImmediateHeartbeatIfActive);
+chrome.tabs.onRemoved.addListener(triggerImmediateHeartbeatIfActive);
+chrome.tabs.onAttached.addListener(triggerImmediateHeartbeatIfActive); // tab moved between windows
+chrome.tabs.onDetached.addListener(triggerImmediateHeartbeatIfActive); // tab moved between windows
+chrome.tabs.onReplaced.addListener(triggerImmediateHeartbeatIfActive); // prerender swap
+
 function startHeartbeat(): void {
   stopHeartbeat();
   state.timer = setInterval(() => {
@@ -121,6 +152,9 @@ function startHeartbeat(): void {
   }, HEARTBEAT_INTERVAL_MS);
   // No .unref() in MV3 service workers — keep the timer alive.
 }
+// chrome.tabs.* listeners are attached at module load above so the bridge
+// sees tab lifecycle events immediately. triggerImmediateHeartbeatIfActive
+// guards against firing before the heartbeat loop is started.
 
 /**
  * Called by native-host.ts whenever the bridge confirms SERVER_STARTED on a
