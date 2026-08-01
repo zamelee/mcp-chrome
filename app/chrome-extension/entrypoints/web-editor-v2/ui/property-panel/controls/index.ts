@@ -13,3 +13,8 @@ export { createAppearanceControl, type AppearanceControlOptions } from './appear
 export { createEffectsControl, type EffectsControlOptions } from './effects-control';
 export { createGradientControl, type GradientControlOptions } from './gradient-control';
 export { createTokenPicker, type TokenPicker, type TokenPickerOptions } from './token-picker';
+export {
+  createTokenValueDisplay,
+  type TokenValueDisplay,
+  type TokenValueDisplayOptions,
+} from './token-value-helper';

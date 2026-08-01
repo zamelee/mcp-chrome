@@ -10,8 +10,10 @@
 
 import { Disposer } from '../../../utils/disposables';
 import type { StyleTransactionHandle, TransactionManager } from '../../../core/transaction-manager';
+import type { CssVarName, DesignTokensService } from '../../../core/design-tokens';
 import type { DesignControl } from '../types';
 import { createInputContainer, type InputContainer } from '../components/input-container';
+import { createTokenValueDisplay, type TokenValueDisplay } from './token-value-helper';
 import { createIconButtonGroup, type IconButtonGroup } from '../components/icon-button-group';
 import { combineLengthValue, formatLengthForDisplay } from './css-helpers';
 import { wireNumberStepping } from './number-stepping';
@@ -611,6 +613,7 @@ interface InputFieldState {
   property: 'left' | 'top' | 'z-index';
   input: HTMLInputElement;
   container: InputContainer;
+  tokenDisplay: TokenValueDisplay | null;
   handle: StyleTransactionHandle | null;
 }
 
@@ -634,10 +637,12 @@ type FieldState = IconButtonGroupFieldState | InputFieldState | TransformFieldSt
 export interface PositionControlOptions {
   container: HTMLElement;
   transactionManager: TransactionManager;
+  /** Optional: enables token pill binding for var(--xxx) values */
+  tokensService?: DesignTokensService;
 }
 
 export function createPositionControl(options: PositionControlOptions): DesignControl {
-  const { container, transactionManager } = options;
+  const { container, transactionManager, tokensService } = options;
   const disposer = new Disposer();
 
   let currentTarget: Element | null = null;
@@ -703,7 +708,29 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
     suffix: 'px',
   });
 
-  xyRow.append(xContainer.root, yContainer.root);
+  // Token displays wrap the X/Y inputs when tokensService is provided.
+  const xTokenDisplay = tokensService
+    ? createTokenValueDisplay({
+        valueHolders: [xContainer.root],
+        ariaLabel: 'X (Left)',
+        tokensService,
+        tokenKind: 'length',
+        onTokenSelected: (name, cssValue) => applyToken('left', name, cssValue),
+        onTokenCleared: () => detachToken('left'),
+      })
+    : null;
+  const yTokenDisplay = tokensService
+    ? createTokenValueDisplay({
+        valueHolders: [yContainer.root],
+        ariaLabel: 'Y (Top)',
+        tokensService,
+        tokenKind: 'length',
+        onTokenSelected: (name, cssValue) => applyToken('top', name, cssValue),
+        onTokenCleared: () => detachToken('top'),
+      })
+    : null;
+
+  xyRow.append(xTokenDisplay?.root ?? xContainer.root, yTokenDisplay?.root ?? yContainer.root);
 
   wireNumberStepping(disposer, xContainer.input, { mode: 'css-length' });
   wireNumberStepping(disposer, yContainer.input, { mode: 'css-length' });
@@ -725,8 +752,18 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
     suffix: null,
   });
 
-  zRow.append(zLabel, zContainer.root);
+  const zTokenDisplay = tokensService
+    ? createTokenValueDisplay({
+        valueHolders: [zContainer.root],
+        ariaLabel: 'Z-Index',
+        tokensService,
+        tokenKind: 'all',
+        onTokenSelected: (name, cssValue) => applyToken('z-index', name, cssValue),
+        onTokenCleared: () => detachToken('z-index'),
+      })
+    : null;
 
+  zRow.append(zLabel, zTokenDisplay?.root ?? zContainer.root);
   wireNumberStepping(disposer, zContainer.input, { mode: 'number', integer: true });
 
   // ---------------------------------------------------------------------------
@@ -799,6 +836,7 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
       property: 'left',
       input: xContainer.input,
       container: xContainer,
+      tokenDisplay: xTokenDisplay,
       handle: null,
     },
     top: {
@@ -806,6 +844,7 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
       property: 'top',
       input: yContainer.input,
       container: yContainer,
+      tokenDisplay: yTokenDisplay,
       handle: null,
     },
     'z-index': {
@@ -813,6 +852,7 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
       property: 'z-index',
       input: zContainer.input,
       container: zContainer,
+      tokenDisplay: zTokenDisplay,
       handle: null,
     },
     transform: {
@@ -902,6 +942,29 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
   }
 
   // ==========================================================================
+  // Token Integration (Phase 5.3)
+  // ==========================================================================
+
+  function applyToken(property: StyleProperty, tokenName: CssVarName, cssValue: string): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    if (!tokensService) return;
+    tokensService.applyTokenToStyle(transactionManager, target, property, tokenName, {
+      merge: true,
+    });
+    syncField(property as FieldKey, true);
+  }
+
+  function detachToken(property: StyleProperty): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    const handle = transactionManager.beginStyle(target, property);
+    if (!handle) return;
+    handle.set('');
+    handle.commit({ merge: true });
+    syncField(property as FieldKey, true);
+  }
+  // ==========================================================================
   // Field Synchronization
   // ==========================================================================
 
@@ -938,6 +1001,8 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
         input.disabled = true;
         input.value = '';
         input.placeholder = '';
+        field.tokenDisplay?.syncValue('');
+        field.tokenDisplay?.setDisabled(true);
         // Reset suffix to default
         if (field.property === 'z-index') {
           field.container.setSuffix(null);
@@ -948,11 +1013,14 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
       }
 
       input.disabled = false;
+      field.tokenDisplay?.setDisabled(false);
       const isEditing = field.handle !== null || isFieldFocused(input);
       if (isEditing && !force) return;
 
       const inlineValue = readInlineValue(target, field.property);
       const displayValue = inlineValue || readComputedValue(target, field.property);
+      // Token pill sync (no-op when tokensService absent).
+      field.tokenDisplay?.syncValue(inlineValue || displayValue);
 
       // z-index is unitless
       if (field.property === 'z-index') {

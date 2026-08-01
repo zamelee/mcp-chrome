@@ -324,9 +324,21 @@
 
 **任务**：
 
-- [ ] 检测 `var(--xxx)` 值
-- [ ] 渲染为 pill 样式
-- [ ] 点击打开 token picker
+- [x] 检测 `var(--xxx)` 值（`controls/token-value-helper.ts` 用 `parseCssVar` 切模式）
+- [x] 渲染为 pill 样式（`components/token-pill.ts`）
+- [x] 点击打开 token picker（pill.onClick → TokenPicker.toggle()）
+
+**已接线控件**（Phase 5.3 完成）：
+
+- [x] `size-control.ts` — width / height（`tokenKind: 'length'`）
+- [x] `spacing-control.ts` — padding + margin × 4（length）
+- [x] `position-control.ts` — left / top（length）+ z-index（'all'）
+- [x] `layout-control.ts` — row-gap / column-gap（length）
+- [x] `appearance-control.ts` — opacity（'all'，slider+input 一起 hide）
+- [x] `property-panel.ts` — 把 `tokensService` 传给以上 5 个控件
+- [x] 测试：`tests/web-editor-v2/token-value-helper.test.ts`（5 tests）
+
+**未接入**（后续阶段）：grid dimensions（matrix picker 复杂度较高）、transform rotate（function list）、border-width / border-radius / border-color 已经通过 ColorField 间接接好
 
 ---
 
@@ -354,24 +366,24 @@
 
 ## 实施进度
 
-| 阶段 | 任务               | 状态    | 备注                                         |
-| ---- | ------------------ | ------- | -------------------------------------------- |
-| 0.1  | 最小化 Bug 修复    | ✅      | 添加全局 `[hidden]` 规则                     |
-| 0.2  | 输入框优化         | ✅      | number-stepping + 真实值显示                 |
-| 1.1  | 颜色方案重构       | ✅      | 白底 + 灰输入框 + inset focus                |
-| 1.2  | 字体与字号调整     | ✅      | 11px 基准 + Inter 字体                       |
-| 1.3  | 间距与边距调整     | ✅      | 更紧凑的布局                                 |
-| 1.4  | 圆角与阴影         | ✅      | shadow-xl + 4px 圆角                         |
-| 1.5  | Group/Section 样式 | ✅      | 分隔线风格                                   |
-| 2.1  | 输入容器系统       | ✅      | 组件 + CSS 样式                              |
-| 2.2  | 更新 Controls      | ✅      | 所有主要控件已迁移，共享 css-helpers.ts      |
-| 3.1  | Tab 信息架构       | 待实施  |                                              |
-| 4.1  | Flow 图标组        | ✅      | icon-button-group.ts + 集成到 layout-control |
-| 4.2  | Alignment 九宫格   | ✅      | alignment-grid.ts + 集成到 layout-control    |
-| 4.3  | 修复 Color Picker  | ✅ 部分 | showPicker 异常处理 + var() 解析             |
-| 5.1  | Shadow & Blur      | ✅      | effects-control.ts + 集成到 property-panel   |
-| 5.2  | 渐变编辑器         | ✅      | gradient-control.ts + 集成到 property-panel  |
-| 5.3  | Token Pill         | 待实施  |                                              |
+| 阶段 | 任务               | 状态    | 备注                                           |
+| ---- | ------------------ | ------- | ---------------------------------------------- |
+| 0.1  | 最小化 Bug 修复    | ✅      | 添加全局 `[hidden]` 规则                       |
+| 0.2  | 输入框优化         | ✅      | number-stepping + 真实值显示                   |
+| 1.1  | 颜色方案重构       | ✅      | 白底 + 灰输入框 + inset focus                  |
+| 1.2  | 字体与字号调整     | ✅      | 11px 基准 + Inter 字体                         |
+| 1.3  | 间距与边距调整     | ✅      | 更紧凑的布局                                   |
+| 1.4  | 圆角与阴影         | ✅      | shadow-xl + 4px 圆角                           |
+| 1.5  | Group/Section 样式 | ✅      | 分隔线风格                                     |
+| 2.1  | 输入容器系统       | ✅      | 组件 + CSS 样式                                |
+| 2.2  | 更新 Controls      | ✅      | 所有主要控件已迁移，共享 css-helpers.ts        |
+| 3.1  | Tab 信息架构       | 待实施  |                                                |
+| 4.1  | Flow 图标组        | ✅      | icon-button-group.ts + 集成到 layout-control   |
+| 4.2  | Alignment 九宫格   | ✅      | alignment-grid.ts + 集成到 layout-control      |
+| 4.3  | 修复 Color Picker  | ✅ 部分 | showPicker 异常处理 + var() 解析               |
+| 5.1  | Shadow & Blur      | ✅      | effects-control.ts + 集成到 property-panel     |
+| 5.2  | 渐变编辑器         | ✅      | gradient-control.ts + 集成到 property-panel    |
+| 5.3  | Token Pill         | ✅      | helper + 5 个长度/数值控件已接线，5 个单元测试 |
 
 ---
 

@@ -12,9 +12,11 @@
 
 import { Disposer } from '../../../utils/disposables';
 import type { StyleTransactionHandle, TransactionManager } from '../../../core/transaction-manager';
+import type { CssVarName, DesignTokensService } from '../../../core/design-tokens';
 import { wireNumberStepping } from './number-stepping';
 import type { DesignControl } from '../types';
 import { createSliderInput, type SliderInput } from '../components/slider-input';
+import { createTokenValueDisplay, type TokenValueDisplay } from './token-value-helper';
 
 // =============================================================================
 // Constants
@@ -33,6 +35,7 @@ interface OpacityFieldState {
   kind: 'opacity';
   property: 'opacity';
   control: SliderInput;
+  tokenDisplay: TokenValueDisplay | null;
   handle: StyleTransactionHandle | null;
 }
 
@@ -115,10 +118,12 @@ function readComputedValue(element: Element, property: string): string {
 export interface AppearanceControlOptions {
   container: HTMLElement;
   transactionManager: TransactionManager;
+  /** Optional: enables token pill binding for var(--xxx) values (e.g. opacity) */
+  tokensService?: DesignTokensService;
 }
 
 export function createAppearanceControl(options: AppearanceControlOptions): DesignControl {
-  const { container, transactionManager } = options;
+  const { container, transactionManager, tokensService } = options;
   const disposer = new Disposer();
 
   let currentTarget: Element | null = null;
@@ -194,6 +199,20 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
   });
   opacityMount.append(opacityControl.root);
 
+  // Token display wraps the slider+input when tokensService is provided.
+  let opacityTokenDisplay: TokenValueDisplay | null = null;
+  if (tokensService) {
+    opacityTokenDisplay = createTokenValueDisplay({
+      valueHolders: [opacityControl.root],
+      ariaLabel: 'Opacity',
+      tokensService,
+      tokenKind: 'all',
+      onTokenSelected: (name, cssValue) => applyToken('opacity', name, cssValue),
+      onTokenCleared: () => detachToken('opacity'),
+    });
+    opacityMount.append(opacityTokenDisplay.root);
+  }
+
   wireNumberStepping(disposer, opacityControl.input, {
     mode: 'number',
     min: 0,
@@ -219,7 +238,13 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
       element: boxSizingSelect,
       handle: null,
     },
-    opacity: { kind: 'opacity', property: 'opacity', control: opacityControl, handle: null },
+    opacity: {
+      kind: 'opacity',
+      property: 'opacity',
+      control: opacityControl,
+      tokenDisplay: opacityTokenDisplay,
+      handle: null,
+    },
   };
 
   const PROPS: readonly AppearanceProperty[] = ['overflow', 'box-sizing', 'opacity'];
@@ -260,6 +285,29 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
   }
 
   // ===========================================================================
+  // Token Integration (Phase 5.3)
+  // ===========================================================================
+
+  function applyToken(property: AppearanceProperty, tokenName: CssVarName, cssValue: string): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    if (!tokensService) return;
+    tokensService.applyTokenToStyle(transactionManager, target, property, tokenName, {
+      merge: true,
+    });
+    syncField(property, true);
+  }
+
+  function detachToken(property: AppearanceProperty): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    const handle = transactionManager.beginStyle(target, property);
+    if (!handle) return;
+    handle.set('');
+    handle.commit({ merge: true });
+    syncField(property, true);
+  }
+  // ===========================================================================
   // Field Synchronization
   // ===========================================================================
 
@@ -275,10 +323,13 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
         slider.value = '0';
         input.value = '';
         input.placeholder = '';
+        field.tokenDisplay?.syncValue('');
+        field.tokenDisplay?.setDisabled(true);
         return;
       }
 
       field.control.setDisabled(false);
+      field.tokenDisplay?.setDisabled(false);
 
       const isEditing = field.handle !== null || isFieldFocused(slider) || isFieldFocused(input);
       if (isEditing && !force) return;
@@ -286,6 +337,9 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
       const inlineValue = readInlineValue(target, property);
       const computedValue = readComputedValue(target, property);
       const displayValue = inlineValue || computedValue;
+      // Token pill sync (no-op when tokensService absent) - hides slider+input
+      // when the value is var(--xxx).
+      field.tokenDisplay?.syncValue(inlineValue || computedValue);
 
       input.value = displayValue;
       input.placeholder = '';

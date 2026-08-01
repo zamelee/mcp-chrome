@@ -19,8 +19,10 @@
 
 import { Disposer } from '../../../utils/disposables';
 import type { StyleTransactionHandle, TransactionManager } from '../../../core/transaction-manager';
+import type { CssVarName, DesignTokensService } from '../../../core/design-tokens';
 import type { DesignControl } from '../types';
 import { createInputContainer, type InputContainer } from '../components/input-container';
+import { createTokenValueDisplay, type TokenValueDisplay } from './token-value-helper';
 import { combineLengthValue, formatLengthForDisplay } from './css-helpers';
 import { wireNumberStepping } from './number-stepping';
 
@@ -66,6 +68,7 @@ interface FieldState {
   property: SpacingProperty;
   input: HTMLInputElement;
   container: InputContainer;
+  tokenDisplay: TokenValueDisplay | null;
   handle: StyleTransactionHandle | null;
 }
 
@@ -130,10 +133,12 @@ function createEdgeIcon(pathD: string): SVGElement {
 export interface SpacingControlOptions {
   container: HTMLElement;
   transactionManager: TransactionManager;
+  /** Optional: enables token pill binding for var(--xxx) values */
+  tokensService?: DesignTokensService;
 }
 
 export function createSpacingControl(options: SpacingControlOptions): DesignControl {
-  const { container, transactionManager } = options;
+  const { container, transactionManager, tokensService } = options;
   const disposer = new Disposer();
 
   let currentTarget: Element | null = null;
@@ -152,10 +157,27 @@ export function createSpacingControl(options: SpacingControlOptions): DesignCont
 
     wireNumberStepping(disposer, inputContainer.input, { mode: 'css-length' });
 
+    let tokenDisplay: TokenValueDisplay | null = null;
+    if (tokensService) {
+      tokenDisplay = createTokenValueDisplay({
+        valueHolders: [inputContainer.root],
+        ariaLabel: formatAriaLabel(property),
+        tokensService,
+        tokenKind: 'length',
+        onTokenSelected: (name, cssValue) => {
+          applyToken(property, name, cssValue);
+        },
+        onTokenCleared: () => {
+          detachToken(property);
+        },
+      });
+    }
+
     return {
       property,
       input: inputContainer.input,
       container: inputContainer,
+      tokenDisplay,
       handle: null,
     };
   }
@@ -191,11 +213,11 @@ export function createSpacingControl(options: SpacingControlOptions): DesignCont
     grid.className = 'we-spacing-grid';
 
     // Row 1: top, right
-    grid.append(fields[properties[0]].container.root);
-    grid.append(fields[properties[1]].container.root);
+    grid.append(fields[properties[0]].tokenDisplay?.root ?? fields[properties[0]].container.root);
+    grid.append(fields[properties[1]].tokenDisplay?.root ?? fields[properties[1]].container.root);
     // Row 2: bottom, left
-    grid.append(fields[properties[2]].container.root);
-    grid.append(fields[properties[3]].container.root);
+    grid.append(fields[properties[2]].tokenDisplay?.root ?? fields[properties[2]].container.root);
+    grid.append(fields[properties[3]].tokenDisplay?.root ?? fields[properties[3]].container.root);
 
     section.append(grid);
     return section;
@@ -253,6 +275,29 @@ export function createSpacingControl(options: SpacingControlOptions): DesignCont
     }
   }
 
+  // ==========================================================================
+  // Token Integration (Phase 5.3)
+  // ==========================================================================
+
+  function applyToken(property: SpacingProperty, tokenName: CssVarName, cssValue: string): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    if (!tokensService) return;
+    tokensService.applyTokenToStyle(transactionManager, target, property, tokenName, {
+      merge: true,
+    });
+    syncField(property, true);
+  }
+
+  function detachToken(property: SpacingProperty): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    const handle = transactionManager.beginStyle(target, property);
+    if (!handle) return;
+    handle.set('');
+    handle.commit({ merge: true });
+    syncField(property, true);
+  }
   // ---------------------------------------------------------------------------
   // Field Synchronization
   // ---------------------------------------------------------------------------
@@ -266,16 +311,21 @@ export function createSpacingControl(options: SpacingControlOptions): DesignCont
       field.input.placeholder = '';
       field.input.disabled = true;
       field.container.setSuffix('px');
+      field.tokenDisplay?.syncValue('');
+      field.tokenDisplay?.setDisabled(true);
       return;
     }
 
     field.input.disabled = false;
+    field.tokenDisplay?.setDisabled(false);
 
     const isEditing = field.handle !== null || isInputFocused(field.input);
     if (isEditing && !force) return;
 
     const inlineValue = readInlineValue(target, property);
     const displayValue = inlineValue || readComputedValue(target, property);
+    // Token pill sync (no-op when tokensService absent).
+    field.tokenDisplay?.syncValue(inlineValue || displayValue);
     const formatted = formatLengthForDisplay(displayValue);
     field.input.value = formatted.value;
     field.input.placeholder = '';

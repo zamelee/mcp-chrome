@@ -407,6 +407,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       sizeControl = createSizeControl({
         container: sizeGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(sizeControl);
     }
@@ -417,6 +418,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       spacingControl = createSpacingControl({
         container: spacingGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(spacingControl);
     }
@@ -427,6 +429,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       positionControl = createPositionControl({
         container: positionGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(positionControl);
     }
@@ -437,6 +440,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       const layoutControl = createLayoutControl({
         container: layoutGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(layoutControl);
     }
@@ -458,6 +462,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       const appearanceControl = createAppearanceControl({
         container: appearanceGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(appearanceControl);
     }

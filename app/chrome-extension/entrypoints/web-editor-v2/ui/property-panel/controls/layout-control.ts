@@ -16,9 +16,11 @@ import type {
   StyleTransactionHandle,
   TransactionManager,
 } from '../../../core/transaction-manager';
+import type { CssVarName, DesignTokensService } from '../../../core/design-tokens';
 import type { DesignControl } from '../types';
 import { createIconButtonGroup, type IconButtonGroup } from '../components/icon-button-group';
 import { createInputContainer, type InputContainer } from '../components/input-container';
+import { createTokenValueDisplay, type TokenValueDisplay } from './token-value-helper';
 import { combineLengthValue, formatLengthForDisplay } from './css-helpers';
 import { wireNumberStepping } from './number-stepping';
 
@@ -77,6 +79,7 @@ interface InputFieldState {
   property: 'row-gap' | 'column-gap';
   element: HTMLInputElement;
   container: InputContainer;
+  tokenDisplay: TokenValueDisplay | null;
   handle: StyleTransactionHandle | null;
   row: HTMLElement;
 }
@@ -502,10 +505,12 @@ function createGridRowsIcon(): SVGElement {
 export interface LayoutControlOptions {
   container: HTMLElement;
   transactionManager: TransactionManager;
+  /** Optional: enables token pill binding for var(--xxx) values */
+  tokensService?: DesignTokensService;
 }
 
 export function createLayoutControl(options: LayoutControlOptions): DesignControl {
-  const { container, transactionManager } = options;
+  const { container, transactionManager, tokensService } = options;
   const disposer = new Disposer();
 
   let currentTarget: Element | null = null;
@@ -829,7 +834,32 @@ export function createLayoutControl(options: LayoutControlOptions): DesignContro
     suffix: 'px',
   });
 
-  gapInputs.append(rowGapContainer.root, columnGapContainer.root);
+  // Token displays wrap the gap inputs when tokensService is provided.
+  const rowGapTokenDisplay = tokensService
+    ? createTokenValueDisplay({
+        valueHolders: [rowGapContainer.root],
+        ariaLabel: 'Row gap',
+        tokensService,
+        tokenKind: 'length',
+        onTokenSelected: (name, cssValue) => applyToken('row-gap', name, cssValue),
+        onTokenCleared: () => detachToken('row-gap'),
+      })
+    : null;
+  const columnGapTokenDisplay = tokensService
+    ? createTokenValueDisplay({
+        valueHolders: [columnGapContainer.root],
+        ariaLabel: 'Column gap',
+        tokensService,
+        tokenKind: 'length',
+        onTokenSelected: (name, cssValue) => applyToken('column-gap', name, cssValue),
+        onTokenCleared: () => detachToken('column-gap'),
+      })
+    : null;
+
+  gapInputs.append(
+    rowGapTokenDisplay?.root ?? rowGapContainer.root,
+    columnGapTokenDisplay?.root ?? columnGapContainer.root,
+  );
   gapMount.append(gapInputs);
   gapRow.append(gapLabel, gapMount);
 
@@ -909,6 +939,7 @@ export function createLayoutControl(options: LayoutControlOptions): DesignContro
       property: 'row-gap',
       element: rowGapContainer.input,
       container: rowGapContainer,
+      tokenDisplay: rowGapTokenDisplay,
       handle: null,
       row: gapRow,
     },
@@ -917,6 +948,7 @@ export function createLayoutControl(options: LayoutControlOptions): DesignContro
       property: 'column-gap',
       element: columnGapContainer.input,
       container: columnGapContainer,
+      tokenDisplay: columnGapTokenDisplay,
       handle: null,
       row: gapRow,
     },
@@ -1031,6 +1063,30 @@ export function createLayoutControl(options: LayoutControlOptions): DesignContro
     for (const p of STYLE_PROPS) commitTransaction(p);
     commitAlignmentTransaction();
     commitGridTransaction();
+  }
+
+  // ==========================================================================
+  // Token Integration (Phase 5.3)
+  // ==========================================================================
+
+  function applyToken(property: LayoutProperty, tokenName: CssVarName, cssValue: string): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    if (!tokensService) return;
+    tokensService.applyTokenToStyle(transactionManager, target, property, tokenName, {
+      merge: true,
+    });
+    syncField(property as FieldKey, true);
+  }
+
+  function detachToken(property: LayoutProperty): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    const handle = transactionManager.beginStyle(target, property);
+    if (!handle) return;
+    handle.set('');
+    handle.commit({ merge: true });
+    syncField(property as FieldKey, true);
   }
 
   // ---------------------------------------------------------------------------
@@ -1218,15 +1274,20 @@ export function createLayoutControl(options: LayoutControlOptions): DesignContro
         input.value = '';
         input.placeholder = '';
         field.container.setSuffix('px');
+        field.tokenDisplay?.syncValue('');
+        field.tokenDisplay?.setDisabled(true);
         return;
       }
 
       input.disabled = false;
+      field.tokenDisplay?.setDisabled(false);
       const isEditing = field.handle !== null || isFieldFocused(input);
       if (isEditing && !force) return;
 
       const inlineValue = readInlineValue(target, field.property);
       const displayValue = inlineValue || readComputedValue(target, field.property);
+      // Token pill sync (no-op when tokensService absent).
+      field.tokenDisplay?.syncValue(inlineValue || displayValue);
       const formatted = formatLengthForDisplay(displayValue);
       input.value = formatted.value;
       field.container.setSuffix(formatted.suffix);

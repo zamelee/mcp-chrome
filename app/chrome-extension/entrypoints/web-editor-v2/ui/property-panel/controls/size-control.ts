@@ -15,8 +15,10 @@
 
 import { Disposer } from '../../../utils/disposables';
 import type { StyleTransactionHandle, TransactionManager } from '../../../core/transaction-manager';
+import type { CssVarName, DesignTokensService } from '../../../core/design-tokens';
 import type { DesignControl } from '../types';
 import { createInputContainer, type InputContainer } from '../components/input-container';
+import { createTokenValueDisplay, type TokenValueDisplay } from './token-value-helper';
 import { combineLengthValue, formatLengthForDisplay } from './css-helpers';
 import { wireNumberStepping } from './number-stepping';
 
@@ -40,6 +42,8 @@ interface FieldState {
   modeSelect: HTMLSelectElement;
   input: HTMLInputElement;
   container: InputContainer;
+  /** Token pill wrapper shown in place of the input when value is var(--xxx) */
+  tokenDisplay: TokenValueDisplay | null;
   /** Cached fixed value for mode switching (per-target, cleared on target change) */
   lastFixedValue: string;
   handle: StyleTransactionHandle | null;
@@ -196,13 +200,15 @@ export interface SizeControlOptions {
   container: HTMLElement;
   /** TransactionManager for style editing with undo/redo */
   transactionManager: TransactionManager;
+  /** Optional: enables token pill binding for var(--xxx) values */
+  tokensService?: DesignTokensService;
 }
 
 /**
  * Create a Size control for editing width/height with mode selection
  */
 export function createSizeControl(options: SizeControlOptions): DesignControl {
-  const { container, transactionManager } = options;
+  const { container, transactionManager, tokensService } = options;
   const disposer = new Disposer();
 
   // State
@@ -236,7 +242,28 @@ export function createSizeControl(options: SizeControlOptions): DesignControl {
     // Wire keyboard stepping
     wireNumberStepping(disposer, inputContainer.input, { mode: 'css-length' });
 
-    column.append(modeSelect, inputContainer.root);
+    // Token pill (when tokensService provided) wraps the input so we can swap
+    // between numeric input and pill based on whether the value is var(--xxx).
+    let tokenDisplay: TokenValueDisplay | null = null;
+    if (tokensService) {
+      tokenDisplay = createTokenValueDisplay({
+        valueHolders: [inputContainer.root],
+        ariaLabel: property.charAt(0).toUpperCase() + property.slice(1),
+        tokensService,
+        tokenKind: 'length',
+        onTokenSelected: (name, cssValue) => {
+          // Drop the cached fixed value; tokens carry their own canonical form.
+          fields[property].lastFixedValue = '';
+          applyToken(property, name, cssValue);
+        },
+        onTokenCleared: () => {
+          detachToken(property);
+        },
+      });
+    }
+
+    const mount = tokenDisplay ? tokenDisplay.root : inputContainer.root;
+    column.append(modeSelect, mount);
 
     return {
       property,
@@ -244,6 +271,7 @@ export function createSizeControl(options: SizeControlOptions): DesignControl {
       modeSelect,
       input: inputContainer.input,
       container: inputContainer,
+      tokenDisplay,
       lastFixedValue: '',
       handle: null,
     };
@@ -305,6 +333,38 @@ export function createSizeControl(options: SizeControlOptions): DesignControl {
   }
 
   // ==========================================================================
+  // Token Integration (Phase 5.3)
+  // ==========================================================================
+
+  /**
+   * Apply a token (var(--xxx)) to the element via TransactionManager.
+   * Falls back to no-op when no target is reachable.
+   */
+  function applyToken(property: SizeProperty, tokenName: CssVarName, cssValue: string): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    if (!tokensService) return;
+    tokensService.applyTokenToStyle(transactionManager, target, property, tokenName, {
+      merge: true,
+    });
+    // Re-sync so the picker / mode state reflects the new var() binding.
+    syncField(property, true);
+  }
+
+  /**
+   * Detach the active var() reference for a property, clearing the inline
+   * style so the stylesheet / computed value takes over.
+   */
+  function detachToken(property: SizeProperty): void {
+    const target = currentTarget;
+    if (!target || !target.isConnected) return;
+    const handle = transactionManager.beginStyle(target, property);
+    if (!handle) return;
+    handle.set('');
+    handle.commit({ merge: true });
+    syncField(property, true);
+  }
+  // ==========================================================================
   // Visibility Control
   // ==========================================================================
 
@@ -357,11 +417,14 @@ export function createSizeControl(options: SizeControlOptions): DesignControl {
       field.input.placeholder = '';
       field.input.disabled = true;
       field.container.setSuffix('px');
+      field.tokenDisplay?.syncValue('');
+      field.tokenDisplay?.setDisabled(true);
       return;
     }
 
     field.modeSelect.disabled = false;
     field.input.disabled = false;
+    field.tokenDisplay?.setDisabled(false);
 
     // Don't overwrite during active editing (unless forced)
     if (!force) {
@@ -375,6 +438,8 @@ export function createSizeControl(options: SizeControlOptions): DesignControl {
     // Get current value and infer mode
     const inlineValue = readInlineValue(target, property);
     const displayValue = inlineValue || readComputedValue(target, property);
+    // Token pill sync (no-op when tokensService absent) - reads var() and toggles.
+    field.tokenDisplay?.syncValue(inlineValue || displayValue);
     const mode = inferSizeMode(inlineValue || displayValue);
 
     // Update mode select and visibility
