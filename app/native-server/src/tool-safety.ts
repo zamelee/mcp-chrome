@@ -23,11 +23,11 @@
 
 export enum SafetyLevel {
   /** L0: pure browser/profile operations; safe across extension reload. */
-  Safe = "safe",
+  Safe = 'safe',
   /** L1: uses tabId but not CDP target bindings; cheap preflight check. */
-  TabBound = "tab-bound",
+  TabBound = 'tab-bound',
   /** L2: caches CDP runtime identity (targetId/sessionId/nodeId); reload kills these. */
-  CdpBound = "cdp-bound",
+  CdpBound = 'cdp-bound',
 }
 
 /**
@@ -85,23 +85,23 @@ export const TOOL_SAFETY: Record<string, SafetyLevel> = {
 };
 
 export class SessionExpiredError extends Error {
-  readonly code = "SESSION_EXPIRED";
+  readonly code = 'SESSION_EXPIRED';
   readonly recoverable = true;
   constructor(toolName: string, reason: string) {
     super(
       `Session expired for tool "${toolName}": ${reason}. ` +
-        `The Chrome extension was reloaded; re-initialize MCP session.`
+        `The Chrome extension was reloaded; re-initialize MCP session.`,
     );
-    this.name = "SessionExpiredError";
+    this.name = 'SessionExpiredError';
   }
 }
 
 export class TabGoneError extends Error {
-  readonly code = "TAB_GONE";
+  readonly code = 'TAB_GONE';
   readonly recoverable = true;
   constructor(toolName: string, tabId: number | string | undefined) {
-    super(`Tab ${tabId ?? "<unknown>"} no longer exists for tool "${toolName}".`);
-    this.name = "TabGoneError";
+    super(`Tab ${tabId ?? '<unknown>'} no longer exists for tool "${toolName}".`);
+    this.name = 'TabGoneError';
   }
 }
 
@@ -114,6 +114,8 @@ export function safetyLevelFor(toolName: string): SafetyLevel {
   return TOOL_SAFETY[toolName] ?? SafetyLevel.CdpBound;
 }
 
+import { HEARTBEAT_STALE_MS } from './constant';
+
 /**
  * Cheap runtime preflight: confirm the bridge has a healthy connection to the
  * extension. The actual aliveness check is async + needs the extension
@@ -125,18 +127,18 @@ export function assertRuntime(
   toolName: string,
   lastHeartbeatMs: number | undefined,
   nowMs: number = Date.now(),
-  heartbeatStaleMs: number = 5_000
+  // Default = HEARTBEAT_STALE_MS (90s = 1.5x the 60s heartbeat interval).
+  // Override is only for unit tests; production callers should rely on the
+  // shared constant so the threshold stays in lock-step with bridge-control.ts.
+  heartbeatStaleMs: number = HEARTBEAT_STALE_MS,
 ): void {
   if (lastHeartbeatMs === undefined) {
-    throw new SessionExpiredError(
-      toolName,
-      "extension has not registered since bridge start"
-    );
+    throw new SessionExpiredError(toolName, 'extension has not registered since bridge start');
   }
   if (nowMs - lastHeartbeatMs > heartbeatStaleMs) {
     throw new SessionExpiredError(
       toolName,
-      `last heartbeat ${Math.round((nowMs - lastHeartbeatMs) / 1000)}s ago`
+      `last heartbeat ${Math.round((nowMs - lastHeartbeatMs) / 1000)}s ago`,
     );
   }
 }
@@ -148,7 +150,7 @@ export function assertRuntime(
 export function assertTab(
   toolName: string,
   tabId: number | string | undefined,
-  resolvedTab: unknown | undefined
+  resolvedTab: unknown | undefined,
 ): void {
   if (resolvedTab === undefined || resolvedTab === null) {
     throw new TabGoneError(toolName, tabId);
@@ -162,15 +164,15 @@ export function assertTab(
 export function assertTarget(
   toolName: string,
   targetId: string | undefined,
-  liveTargets: ReadonlySet<string> | undefined
+  liveTargets: ReadonlySet<string> | undefined,
 ): void {
   if (!targetId) {
-    throw new SessionExpiredError(toolName, "no CDP targetId provided");
+    throw new SessionExpiredError(toolName, 'no CDP targetId provided');
   }
   if (!liveTargets || !liveTargets.has(targetId)) {
     throw new SessionExpiredError(
       toolName,
-      `CDP target ${targetId} not in live set (extension reloaded?)`
+      `CDP target ${targetId} not in live set (extension reloaded?)`,
     );
   }
 }

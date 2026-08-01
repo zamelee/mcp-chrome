@@ -17,6 +17,27 @@ export const TIMEOUTS = {
   PROCESS_DATA_TIMEOUT: 20000,
 } as const;
 
+// ============================================================
+// Extension heartbeat -> tool preflight threshold (Plan 1.4)
+// ============================================================
+
+/**
+ * Stale threshold for the extension heartbeat check inside runPreflight /
+ * assertRuntime. If Date.now() - lastHeartbeat > HEARTBEAT_STALE_MS we
+ * refuse the tool call with SESSION_EXPIRED.
+ *
+ * MUST stay > HEARTBEAT_INTERVAL_MS (60s in bridge-control.ts) so the
+ * check does not fire spuriously between heartbeats. With a 60s heartbeat
+ * interval and a 5s threshold, ~92% of every minute was SESSION_EXPIRED
+ * (the 5s window after each heartbeat is the only working window).
+ *
+ * We pick 90s (1.5x heartbeat interval) as the canonical one missed
+ * heartbeat detection: tolerant of one skipped heartbeat (MV3 service
+ * worker throttling, network blip) but still flags a real reload within
+ * ~90s of the extension going away.
+ */
+export const HEARTBEAT_STALE_MS = 90_000;
+
 // Server configuration
 export const SERVER_CONFIG = {
   HOST: '127.0.0.1',

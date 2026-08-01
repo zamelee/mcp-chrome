@@ -45,6 +45,16 @@
 
 查看 [完整更新日志](docs/CHANGELOG.md) 了解所有版本变更。
 
+## 📢 v1.7.2 更新内容
+
+> **修了一个隐藏的 chronic SESSION_EXPIRED 噪声** - bridge 的 preflight 心跳阈值是 5s,但 extension 心跳间隔是 60s,导致每 60s 中有 ~55s 都被判为 SESSION_EXPIRED (8.3% 的工作时间窗口)。这是 Codex session 频繁报 SESSION_EXPIRED 的真正根因。修复:HEARTBEAT_STALE_MS = 90_000 (1.5x heartbeat 间隔),从 register-tools.ts 和 tool-safety.ts 共用一个常量。
+>
+> - 🔧 **shared constant** - 在 app/native-server/src/constant/index.ts 提取,避免再次 drift。
+> - 🔄 **regression 测试** - 加 2 个测试覆盖 60s/89s heartbeat 年龄 (都在阈值内,应放行)。
+> - ✅ **Jest 55/55 全绿** (+2 新测试, 无回归)
+
+查看 [完整更新日志](docs/CHANGELOG.md) 了解所有版本变更。
+
 ---
 
 ## 📢 v1.6.1 更新内容

@@ -10,6 +10,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
 import { SessionExpiredError, TabGoneError, safetyLevelFor, SafetyLevel } from '../tool-safety';
 import { getLatestExtensionConnection } from '../control-state';
+import { HEARTBEAT_STALE_MS } from '../constant';
 
 interface ToolActivity {
   requestId: string;
@@ -190,8 +191,10 @@ export function runPreflight(
   if (!conn) {
     return errorResult(name, 'SESSION_EXPIRED', 'extension has not registered since bridge start');
   }
-  const heartbeatStaleMs = 5_000;
-  if (Date.now() - conn.lastHeartbeat > heartbeatStaleMs) {
+  // 90s = 1.5x HEARTBEAT_INTERVAL_MS (60s). Must stay > heartbeat interval so
+  // the preflight does not fire between heartbeats (previous 5s threshold
+  // rejected ~92% of every minute; see constant/HEARTBEAT_STALE_MS).
+  if (Date.now() - conn.lastHeartbeat > HEARTBEAT_STALE_MS) {
     return errorResult(
       name,
       'SESSION_EXPIRED',

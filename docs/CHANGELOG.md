@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.2] - 2026-08-01
+
+### Fixed
+
+- **heartbeat stale threshold 5s to 90s (was rejecting ~92% of every minute with SESSION_EXPIRED)** - Extension sends heartbeat every 60s (HEARTBEAT_INTERVAL_MS in bridge-control.ts:19) but the bridge preflight (register-tools.ts:193 + tool-safety.ts:128) was considering heartbeat stale after only 5s, returning SESSION_EXPIRED for ~55s out of every 60s window (between heartbeat and next heartbeat). The only time tools worked was the 8.3% window right after each heartbeat. This is why every Codex session was hitting chronic SESSION_EXPIRED even after a single extension reload, and why bypassing the Codex MCP client with direct HTTP did not help (the false-positive was in the bridge, not the MCP transport). Fix: extract HEARTBEAT_STALE_MS = 90_000 (1.5x the 60s heartbeat interval) as a shared constant in app/native-server/src/constant/index.ts, use it from both register-tools.ts and tool-safety.ts. 2 new regression tests in register-tools.test.ts cover the 60s/89s between-heartbeat windows (both must pass preflight). All 55/55 Jest tests still green.
+
 ## [v1.8.0] - 2026-08-01
 
 ### Added

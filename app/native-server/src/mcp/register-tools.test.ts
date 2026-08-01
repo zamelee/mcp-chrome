@@ -23,17 +23,35 @@ describe('Plan 1.4 - tool preflight (runPreflight)', () => {
     expect(payload.toolName).toBe('chrome_javascript');
   });
 
-  test('CdpBound 工具心跳过期(>5s)返回 SESSION_EXPIRED', () => {
+  test('CdpBound 工具心跳过期(>90s)返回 SESSION_EXPIRED', () => {
     recordExtensionConnection(
       'test-ext-preflight-stale',
       { liveTargets: ['tgt-1'], markHeartbeat: true },
-      Date.now() - 10_000, // 10s old, threshold is 5s
+      Date.now() - 120_000, // 120s old, threshold is 90s (HEARTBEAT_STALE_MS)
     );
     const out = runPreflight('chrome_click', { tabId: 3 });
     expect(out).not.toBeNull();
     const payload = JSON.parse(out!.content[0].text);
     expect(payload.code).toBe('SESSION_EXPIRED');
     expect(payload.message).toMatch(/last heartbeat \d+s ago/);
+  });
+
+  test('CdpBound 工具心跳 60s old (典型 heartbeat 间隔) 放行 (regression: 之前 5s 阈值会误判)', () => {
+    recordExtensionConnection(
+      'test-ext-preflight-between-heartbeats',
+      { liveTargets: ['3'], markHeartbeat: true },
+      Date.now() - 60_000, // 60s old = exactly 1 heartbeat interval
+    );
+    expect(runPreflight('chrome_click', { tabId: 3 })).toBeNull();
+  });
+
+  test('CdpBound 工具心跳 89s old (1s 内到达阈值) 放行', () => {
+    recordExtensionConnection(
+      'test-ext-preflight-just-fresh',
+      { liveTargets: ['3'], markHeartbeat: true },
+      Date.now() - 89_000, // 89s old = just under threshold
+    );
+    expect(runPreflight('chrome_click', { tabId: 3 })).toBeNull();
   });
 
   test('CdpBound 工具 targetId 不在 live set 返回 SESSION_EXPIRED', () => {

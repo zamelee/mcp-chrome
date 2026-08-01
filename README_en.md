@@ -45,6 +45,16 @@ See the [full changelog](docs/CHANGELOG.md) for all version changes.
 
 See the [full changelog](docs/CHANGELOG.md) for all version changes.
 
+## 📢 What is New in v1.7.2
+
+> **Fixed a hidden chronic SESSION_EXPIRED bug** - The bridge preflight heartbeat threshold was 5s but the extension sends heartbeats every 60s, so ~55s out of every 60s window was incorrectly rejected (only 8.3% working window per minute). This is the real root cause of SESSION_EXPIRED noise across Codex sessions. Fix: HEARTBEAT_STALE_MS = 90_000 (1.5x the heartbeat interval) extracted as a shared constant in app/native-server/src/constant/index.ts and used by both register-tools.ts and tool-safety.ts.
+>
+> - 🔧 **shared constant** prevents future drift between the two preflight paths.
+> - 🔄 **2 new regression tests** cover the 60s/89s between-heartbeat windows (both must pass preflight).
+> - ✅ **Jest 55/55 green** (+2 new tests, no regression)
+
+See the [full changelog](docs/CHANGELOG.md) for all version changes.
+
 ---
 
 ## 📢 What's New in v1.6.1
