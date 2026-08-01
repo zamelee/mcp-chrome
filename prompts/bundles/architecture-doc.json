@@ -1,0 +1,14 @@
+{
+  "name": "architecture-doc",
+  "promptPrefix": "Generate or update the architecture documentation. Focus on module boundaries, data flow, and entry points.",
+  "attachments": [
+    "D:/Documents/VibeCoding/mcp-chrome/docs/CHANGELOG.md"
+  ],
+  "contextPaths": [
+    "D:/Documents/VibeCoding/mcp-chrome/app/native-server/src/scripts",
+    "D:/Documents/VibeCoding/mcp-chrome/app/native-server/src/server",
+    "D:/Documents/VibeCoding/mcp-chrome/app/native-server/src/mcp"
+  ],
+  "createdAt": "2026-08-01T00:00:00Z",
+  "updatedAt": "2026-08-01T00:00:00Z"
+}

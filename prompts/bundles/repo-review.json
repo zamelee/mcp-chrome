@@ -1,0 +1,14 @@
+{
+  "name": "repo-review",
+  "promptPrefix": "Review the repository carefully. Identify architectural decisions, technical debt, and improvement opportunities. Reference specific files and line numbers.",
+  "attachments": [
+    "D:/Documents/VibeCoding/mcp-chrome/AGENTS.md",
+    "D:/Documents/VibeCoding/mcp-chrome/docs/CHANGELOG.md"
+  ],
+  "contextPaths": [
+    "D:/Documents/VibeCoding/mcp-chrome/tools",
+    "D:/Documents/VibeCoding/mcp-chrome/app/native-server/src"
+  ],
+  "createdAt": "2026-08-01T00:00:00Z",
+  "updatedAt": "2026-08-01T00:00:00Z"
+}
