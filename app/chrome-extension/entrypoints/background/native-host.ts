@@ -4,6 +4,7 @@ import { NATIVE_HOST, STORAGE_KEYS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '@/c
 import { handleCallTool } from './tools';
 import { getFlow, listFlows } from './record-replay-v3/public-api';
 import { acquireKeepalive } from './keepalive-manager';
+import { onBridgeStarted, onBridgeStopped } from './bridge-control';
 
 const LOG_PREFIX = '[NativeHost]';
 
@@ -431,6 +432,11 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
         // Server is confirmed running - now we can reset reconnect state
         resetReconnectState();
         console.log(`${SUCCESS_MESSAGES.SERVER_STARTED} on port ${port}`);
+        // Plan 2.2: tell the bridge we're alive (extensionId + live tab
+        // snapshot). The bridge starts the heartbeat loop in response.
+        if (typeof port === 'number') {
+          void onBridgeStarted(port);
+        }
       } else if (message.type === NativeMessageType.SERVER_STOPPED) {
         currentServerStatus = {
           isRunning: false,
@@ -439,6 +445,8 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
         };
         await saveServerStatus(currentServerStatus);
         broadcastServerStatusChange(currentServerStatus);
+        // Plan 2.2: stop the heartbeat loop so we don't hammer a dead bridge.
+        onBridgeStopped();
         console.log(SUCCESS_MESSAGES.SERVER_STOPPED);
       } else if (message.type === NativeMessageType.ERROR_FROM_NATIVE_HOST) {
         console.error('Error from native host:', message.payload?.message || 'Unknown error');
@@ -453,6 +461,9 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
     nativePort.onDisconnect.addListener(() => {
       console.warn(ERROR_MESSAGES.NATIVE_DISCONNECTED, chrome.runtime.lastError);
       nativePort = null;
+
+      // Plan 2.2: stop heartbeat loop; next onBridgeStarted() will resume it.
+      onBridgeStopped();
 
       // Mark server as stopped since native host disconnection means server is down
       void markServerStopped('native_port_disconnected');
