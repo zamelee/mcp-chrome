@@ -5,6 +5,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.0-unreleased] - 2026-07-30
+
+### Added
+
+- **Per-vendor controller base class** (Patch 6 of 6 from agentify-sh/desktop deep-dive).
+  New tools/vendor_base.py (~280 lines) provides VendorControllerBase ABC with 6
+  abstract methods (_vendor_name / _get_allowed_host / _build_reply_selector /
+  _fetch_and_inject_prompt / _click_send / _wait_for_assistant_stable) + 2 optional
+  hooks (_post_extract_hook / _challenge_markers). Shared infrastructure includes
+  Mutex.runExclusive (per-tab single-flight), StopToken (cooperative cancel chain
+  raising CancelledError), ChallengeDetector (vendor-customized anti-bot probe),
+  MCP transport (post / parse_sse / js_evaluate / chrome_navigate / chrome_computer /
+  chrome_extract), and _save_handoff (markdown write). Two shipped subclasses:
+  ChatGPTController (ProseMirror composer + Continue generating auto-click) and
+  CopilotController (textarea + Enter + single-shot response). Test matrix: 32 cases
+  in tools/test_vendor_base.py (all green). Full Python suite: 93/93 across 4 files
+  (chatgpt_consult 7 + selectors 24 + bundles 30 + vendor_base 32, no regression).
+  Final patch of agentify-sh/desktop deep-dive plan (6/6 complete).
+  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 2.6.
+- **Bundle concept landed** (Patch 5 of 6 from agentify-sh/desktop deep-dive).
+  New tools/bundles.py (172 lines) exposes load_bundle / list_bundles /
+  normalize_bundle / merge_bundle_with_args / reset_cache. New prompts/bundles/
+  directory ships 2 example bundles (repo-review.json, architecture-doc.json) +
+  AGENTS.md authoring guide. Bundle schema enforces: name 1-120 chars matching
+  ^[A-Za-z0-9._-]+$, attachments/contextPaths must be absolute paths, all strings
+  non-empty after strip. chatgpt_consult.py gains --bundle NAME / --prompt-prefix /
+  --attachment / --context-path flags. Bundle not found exits with code 8 (HTTP 404
+  semantics per plan section 2.5). Test matrix: 30 cases in tools/test_bundles.py
+  (all green). Full Python suite: 61/61 (no regression).
+  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 2.5.
+- **selectors.json multi-selector fallback** (Patch 4 of 6 from agentify-sh/desktop deep-dive).
+  New tools/selectors.json defines 5 required elements (promptTextarea, sendButton,
+  stopButton, assistantMessage, composerRoot) with 5-13 fallback CSS selectors each
+  (13/11/6/8/5 respectively, totaling 43 fallbacks). tools/selectors.py exposes
+  load_selectors() + validate_selectors() + get_selector() + get_primary_fallback()
+  + compose_message_selector() with override path support (~/.codex/selectors.override.json).
+  tools/chatgpt_consult.py REPLY_SELECTOR migrated to use compose_message_selector(),
+  keeping the legacy hardcoded format as a chr()-based fallback when running outside
+  tools/. Test matrix: 24 cases in tools/test_selectors.py (all green) + 7/7 from
+  Patch 2 (no regression).
+  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 2.4.
+- **findChromeExecutable port** (Patch 3 of 6 from agentify-sh/desktop deep-dive).
+  app/native-server/src/scripts/browser-config.ts extends BrowserType enum with
+  BRAVE / EDGE (in addition to CHROME / CHROMIUM). Adds 3 new exports:
+  resolveBrowserExecutable(browser) returns the first existing candidate path
+  (Windows: 3 ProgramFiles + 3 ProgramFiles(x86) + LOCALAPPDATA variants;
+  macOS: /Applications/*.app/Contents/MacOS/*; Linux: /usr/bin/*); findChromeExecutable(explicitPath?)
+  with explicit-path short-circuit + priority chain (Chrome > Chromium > Brave > Edge)
+  + PATH fallback via where/which; chromeSpawnOptions(platform?) returns
+  {detached:true, stdio:'ignore', windowsHide:true} on Windows (per agentify-sh
+  v0.2.4 regression fix). Throws ChromeBinaryNotFoundError with searchedPaths
+  for diagnostics. Test matrix: 15 cases in browser-config.test.ts (all green).
+  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 2.3.
+- **chatgpt_consult waitForAssistantStable** (Patch 2 of 6 from agentify-sh/desktop deep-dive).
+  tools/chatgpt_consult.py upgrades wait_for_response with dynamic text-stable
+  threshold (1500/2200/3000 ms by length) + Continue generating button auto-click
+  (max 3). Adds extract_code_blocks(sid, tab_id) returning [{language, text}].
+  extract_reply returns 3-tuple (page_url, text, code_blocks); consult() and
+  capture_only() pass code_blocks through to save_handoff. save_handoff writes
+  a 4th handoff section when code_blocks present, with `lang fenced blocks.
+  Test matrix: 7 cases in tools/test_chatgpt_consult.py (all green).
+  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md.
+- **popup-gate policy module** (Patch 1 of 6 from agentify-sh/desktop deep-dive).
+  New pp/native-server/src/server/popup-gate.ts gates browser popup URLs
+  against a vendor-aware SSO allowlist (chatgpt / claude / gemini / perplexity /
+  grok / aistudio). Handles the bout:blank OAuth pre-open special case.
+  Adapted from upstream popup-policy.mjs (MPL-2.0, v0.2.4).
+  Exposed via NativeMessagingHost.evaluatePopupGate(input) so the Chrome
+  extension background script can call it before allowing OAuth popups to open.
+  Test matrix: 13 cases in popup-gate.test.ts (all green).
+  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md.
+
+### Fixed
+
+- **native-server test build infra** — 	sconfig.json adds isolatedModules: true
+  and jest.config.js adds a moduleNameMapper that rewrites NodeNext ESM-style
+  .js import specifiers to .ts at resolution time, plus pins ts-jest to
+  CommonJS at test time. Without these, src/server/server.test.ts cannot
+  resolve ../constant/index.js (no build artifact emitted) and the whole
+  server test file silently fails to load. Caught while integrating Patch 1.
+
+- **chatgpt SSO 403 cascade** — when chatgpt.com opens a Google/Microsoft/GitHub
+  OAuth popup and the Chrome extension blocks it, the chatgpt backend falls back
+  to embedded login, the React tree corrupts, and the next conversation call
+  returns 403 + _ref is not defined page crash. popup-gate lets the extension
+  recognize vendor SSO providers and allow those popups through.
+
 ## [v1.6.1] - 2026-07-24
 
 ### Fixed
