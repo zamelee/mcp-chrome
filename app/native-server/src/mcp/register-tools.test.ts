@@ -51,7 +51,7 @@ describe('Plan 1.4 - tool preflight (runPreflight)', () => {
 
   test('CdpBound 工具 targetId 在 live set + 心跳新鲜 → 放行', () => {
     recordExtensionConnection('test-ext-preflight-ok', {
-      liveTargets: ['tgt-a', 'tgt-b'],
+      liveTargets: ['tgt-a', 'tgt-b', '1'],
       markHeartbeat: true,
     });
     expect(runPreflight('chrome_javascript', { tabId: 1, targetId: 'tgt-a' })).toBeNull();
@@ -60,14 +60,55 @@ describe('Plan 1.4 - tool preflight (runPreflight)', () => {
 
   test('CdpBound 工具不传 targetId 时只校验心跳,放行', () => {
     recordExtensionConnection('test-ext-preflight-no-target', {
-      liveTargets: ['tgt-a'],
+      liveTargets: ['tgt-a', '1'],
       markHeartbeat: true,
     });
     expect(runPreflight('chrome_javascript', { tabId: 1 })).toBeNull();
   });
 
+  test('TabBound 工具 tabId 不在 live set → SESSION_EXPIRED', () => {
+    recordExtensionConnection('test-ext-preflight-tabbound', {
+      liveTargets: ['99'],
+      markHeartbeat: true,
+    });
+    const out = runPreflight('chrome_screenshot', { tabId: 1 });
+    expect(out).not.toBeNull();
+    const payload = JSON.parse(out!.content[0].text);
+    expect(payload.code).toBe('SESSION_EXPIRED');
+    expect(payload.message).toContain('Tab 1 not in live set');
+  });
+
+  test('TabBound 工具 tabId 在 live set → 放行', () => {
+    recordExtensionConnection('test-ext-preflight-tabbound-ok', {
+      liveTargets: ['1', '2', '3'],
+      markHeartbeat: true,
+    });
+    expect(runPreflight('chrome_screenshot', { tabId: 1 })).toBeNull();
+    expect(runPreflight('chrome_navigate', { tabId: 3, url: 'about:blank' })).toBeNull();
+  });
+
+  test('CdpBound 工具同时传 targetId 和 tabId 时分别检查', () => {
+    recordExtensionConnection('test-ext-preflight-dual', {
+      liveTargets: ['42'],
+      markHeartbeat: true,
+    });
+    // targetId 不在 + tabId 在 → 仍失败(targetId 优先)
+    const out1 = runPreflight('chrome_javascript', { tabId: 42, targetId: 'tgt-bad' });
+    expect(out1).not.toBeNull();
+    const p1 = JSON.parse(out1!.content[0].text);
+    expect(p1.message).toContain('CDP target tgt-bad');
+    // tabId 不在 + 没 targetId → 仍失败(tabId 兜底)
+    const out2 = runPreflight('chrome_javascript', { tabId: 99 });
+    expect(out2).not.toBeNull();
+    const p2 = JSON.parse(out2!.content[0].text);
+    expect(p2.message).toContain('Tab 99');
+  });
+
   test('TabBound 工具心跳新鲜 → 放行', () => {
-    recordExtensionConnection('test-ext-preflight-tab', { liveTargets: [], markHeartbeat: true });
+    recordExtensionConnection('test-ext-preflight-tab', {
+      liveTargets: ['5'],
+      markHeartbeat: true,
+    });
     expect(runPreflight('chrome_screenshot', { tabId: 5 })).toBeNull();
     expect(runPreflight('chrome_navigate', { tabId: 5, url: 'about:blank' })).toBeNull();
   });

@@ -200,13 +200,50 @@ export function runPreflight(
   }
 
   // CdpBound additionally checks the live target set when the tool passes a targetId.
+  // We also accept tabId (number) because the extension's heartbeat emits tab IDs
+  // (from chrome.tabs.query) as the liveTargets payload. CDP targetId semantics
+  // are stricter (L2), tabId is L1 — but a stale tabId is the most common
+  // reload signal we get, so we check both shapes.
   if (level === SafetyLevel.CdpBound) {
     const targetId = typeof args?.targetId === 'string' ? args.targetId : undefined;
+    const tabId =
+      typeof args?.tabId === 'number'
+        ? String(args.tabId)
+        : typeof args?.tabId === 'string'
+          ? args.tabId
+          : undefined;
     if (targetId && !conn.liveTargets.has(targetId)) {
       return errorResult(
         name,
         'SESSION_EXPIRED',
         `CDP target ${targetId} not in live set (extension reloaded?)`,
+      );
+    }
+    if (tabId && !conn.liveTargets.has(tabId)) {
+      return errorResult(
+        name,
+        'SESSION_EXPIRED',
+        `Tab ${tabId} not in live set (extension reloaded?)`,
+      );
+    }
+  }
+
+  // TabBound also checks tab presence when the tool passes a tabId.
+  // (Plan 2.3 update: extension heartbeat emits tab IDs; preflight now checks
+  // tab presence for TabBound tools too — without it a stale tabId would
+  // round-trip to the dead extension before being rejected downstream.)
+  if (level === SafetyLevel.TabBound) {
+    const tabId =
+      typeof args?.tabId === 'number'
+        ? String(args.tabId)
+        : typeof args?.tabId === 'string'
+          ? args.tabId
+          : undefined;
+    if (tabId && !conn.liveTargets.has(tabId)) {
+      return errorResult(
+        name,
+        'SESSION_EXPIRED',
+        `Tab ${tabId} not in live set (extension reloaded?)`,
       );
     }
   }
