@@ -390,18 +390,37 @@ export class NativeMessagingHost {
       pending.reject(new Error('Native host is shutting down or Chrome disconnected.'));
     });
     this.pendingRequests.clear();
+    console.log('[native-messaging-host] Connection closed; bridge shutting down.');
 
-    // Plan Y (reload-fix close-the-loop): **do not** stop the HTTP server or
-    // exit on Chrome disconnect. The bridge is the durable process; the
-    // extension connection is transient. When the user reloads the extension
-    // (chrome://extensions refresh, dev rebuild, etc.) Chrome closes the
-    // native-messaging stdin pipe, which used to tear the bridge down. With
-    // this change, the bridge keeps listening on 12306 so existing MCP
-    // sessions and in-flight stdio bridge clients keep working.
+    // REVERTED Plan Y: stop the HTTP server and exit. Reason: Chrome's native-
+    // messaging host child has the SAME lifetime as its parent render process.
+    // When Chrome kills the parent (e.g. extension reload, GC), the stdio
+    // pipes are torn and any extension trying to connectNative via this
+    // orphan process will fail with "Error when communicating with the native
+    // messaging host" (Chrome's view of the host child is gone). Keeping the
+    // bridge alive after disconnect creates an orphan that Chrome can never
+    // talk to, which traps the extension popup at "Connected, Service Not
+    // Started" forever.
     //
-    // If we ever want a true teardown (e.g. SIGINT, manual stop), listen for
-    // SIGTERM/SIGINT at the process level — cleanup() is no longer terminal.
-    console.log('[native-messaging-host] Connection closed; bridge stays up.');
+    // The correct architecture is: bridge dies when Chrome dies. Chrome's
+    // reconnect schedule (scheduleReconnect in background/native-host.ts)
+    // then spawns a fresh host child for the next connectNative retry. Cost:
+    // a few seconds of MCP tool 400 immediately after a reload, but the
+    // overall pipeline (connectNative -> START -> server.start -> 200 ->
+    // SERVER_STARTED -> onBridgeStarted -> /internal/register + heartbeat)
+    // completes cleanly each time.
+    if (this.associatedServer && this.associatedServer.isRunning) {
+      this.associatedServer
+        .stop()
+        .then(() => {
+          process.exit(0);
+        })
+        .catch(() => {
+          process.exit(1);
+        });
+    } else {
+      process.exit(0);
+    }
   }
 }
 
