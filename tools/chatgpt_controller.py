@@ -204,6 +204,53 @@ class ChatGPTController(VendorControllerBase):
             self._current_sid = None
 
 
+    def capture(self, url, tab_id, topic=None):
+        """Read-only path: load an existing chatgpt.com conversation and save its reply.
+
+        Replaces the legacy capture_only() helper in chatgpt_consult.py. Goes through
+        the same VendorControllerBase.consult() orchestrator pattern (navigate -> wait for
+        load -> extract via vendor selector -> save handoff) but skips the prompt
+        injection + send + wait-for-stable steps.
+        """
+        import re as _re
+        sid = self._ensure_session()
+        self._guard_site(sid, tab_id)
+        self._chrome_navigate(sid, url, tab_id)
+        # Wait for at least 1 message to appear (page loaded + at least one reply).
+        sel = self._build_message_count_selector()
+        js = ("return JSON.stringify({ready: document.readyState, msgCount: document.querySelectorAll(" + chr(34) + sel + chr(34) + ").length});")
+        t0 = __import__("time").time()
+        last = {}
+        while __import__("time").time() - t0 < 60:
+            last = self._js_evaluate(sid, js, tab_id)
+            if isinstance(last, dict) and last.get("ready") == "complete" and last.get("msgCount", 0) >= 1:
+                break
+            __import__("time").sleep(1)
+        else:
+            print("FATAL: page did not load within 60s: " + str(last), file=__import__("sys").stderr); __import__("sys").exit(6)
+        sel_reply = self._build_reply_selector()
+        inner = self._chrome_extract(sid, tab_id, selector=sel_reply, fields=[{"name": "text", "selector": "", "type": "text"}])
+        page_url = inner.get("pageUrl", url)
+        seen = set()
+        parts = []
+        for it in inner.get("items", []):
+            t = (it.get("text") or "").strip()
+            if t and t not in seen:
+                seen.add(t)
+                parts.append(t)
+        text = chr(10).join(parts)
+        # Topic defaults to last path segment of URL.
+        if not topic:
+            topic = "chatgpt-" + page_url.rsplit(chr(47), 1)[-1][:8]
+        handoff = self._save_handoff(topic, page_url, "(captured from existing URL; original prompt not preserved)", text, code_blocks=None)
+        return page_url, text, handoff
+
+    def _build_message_count_selector(self):
+        """Build the data-message-author-role selector for wait_for_load."""
+        # Mirrors the data-message-author-role detection in tools/selectors.json.
+        return "[data-message-author-role]"
+
+
 def cli_consult(prompt_path, tab_id, topic=None):
     """Convenience: load a prompt file, run consult, print summary."""
     ctl = ChatGPTController()

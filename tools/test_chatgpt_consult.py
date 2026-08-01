@@ -1,98 +1,265 @@
+"""test_chatgpt_consult.py
+
+Post-Step-3 tests for tools/chatgpt_consult.py (thin CLI wrapper around ChatGPTController).
+
+After Step 3, chatgpt_consult.py is ~150 lines of CLI plumbing only:
+- argparse (--bundle, --prompt-prefix, --attachment, --context-path, --capture, etc.)
+- bundle loading + merge (delegates to tools/bundles.py)
+- register_conversation (writes to ~/.codex/ai-conversations.json)
+- delegates to ChatGPTController.consult() / .capture() (the actual work)
+
+Tests verify the wiring without launching real Chrome:
+  - --help lists all flags
+  - consult(args) calls ChatGPTController().consult(tab_id, prompt_text, topic, continue_url)
+    with the merged prompt from _apply_bundle_merge
+  - capture(args) calls ChatGPTController().capture(url, tab_id, topic)
+  - --bundle NAME applies merge; --bundle nonexistent exits 8
+  - register_conversation appends to ~/.codex/ai-conversations.json
 """
-chatgpt_consult.test.py
+import os, sys, json, tempfile, subprocess
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-Patch 2 unit tests for tools/chatgpt_consult.py. We mock the MCP bridge
-round-trip so the test runs offline (no real Chrome session required).
 
-Coverage:
-  - dynamicStableMs computation (1500 / 2200 / 3000 thresholds per length)
-  - Continue generating detection + auto-click (max 3)
-  - extract_code_blocks splits code from prose
-  - save_handoff writes 4th section when code_blocks present
-  - 3-tuple return from extract_reply (page_url, text, code_blocks)
-"""
-import os, sys, time, tempfile
-from unittest import mock
+def _make_prompt(text="test prompt body"):
+    f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+    f.write(text)
+    f.close()
+    return f.name
 
-sys.path.insert(0, r"D:\Documents\VibeCoding\mcp-chrome\tools")
-import chatgpt_consult  # noqa: E402
 
-def _stable_short_snap(*args, **kwargs):
-    return {"count": 2, "stop": False, "sendEnabled": True, "hasContinue": False, "hasRegenerate": False, "txt": "hello world " * 100}
+def _clean(path):
+    try:
+        os.unlink(path)
+    except Exception:
+        pass
 
-def _stable_long_snap(*args, **kwargs):
-    return {"count": 2, "stop": False, "sendEnabled": True, "hasContinue": False, "hasRegenerate": False, "txt": "x" * 10000}
 
-def _continue_snap(*args, **kwargs):
-    return {"count": 2, "stop": False, "sendEnabled": True, "hasContinue": True, "hasRegenerate": False, "txt": "truncated" * 50}
+class TestChatgptConsultCLI:
+    def setup_method(self):
+        sys.path.insert(0, "tools")
+        # Explicitly import so sys.modules is populated even when test runs in isolation.
+        import chatgpt_consult
+        import chatgpt_controller
+        import bundles
+        self.cc = chatgpt_consult
+        self.ctl = chatgpt_controller
+        self.bundles = bundles
 
-# Redirect handoff dir to tmp so tests do not pollute docs/ai-conversations.
-_TMP = tempfile.mkdtemp(prefix="chatgpt_consult_test_")
-chatgpt_consult.HANDOFF_DIR = _TMP
+    def test_help_lists_all_flags(self):
+        r = subprocess.run(
+            [sys.executable, "tools/chatgpt_consult.py", "--help"],
+            capture_output=True, text=True,
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        )
+        assert r.returncode == 0
+        for flag in ["--bundle", "--prompt-prefix", "--attachment", "--context-path",
+                     "--capture", "--continue", "--register", "--tab-id"]:
+            assert flag in r.stdout, "missing flag: " + flag
 
-def test_wait_for_response_short_text_uses_base_threshold():
-    with mock.patch.object(chatgpt_consult, "js_evaluate", side_effect=_stable_short_snap):
-        t0 = time.time()
-        ok, _ = chatgpt_consult.wait_for_response("sid", 1, prev_count=1, timeout_s=10)
-        elapsed = time.time() - t0
-    assert ok is True
-    assert elapsed >= 1.4, f"expected >= 1.4s, got {elapsed:.2f}s"
-    assert elapsed < 2.0, f"expected < 2s, got {elapsed:.2f}s"
+    def test_consult_delegates_to_chatgpt_controller(self):
+        prompt_path = _make_prompt()
+        try:
+            captured = {}
+            real_consult = self.ctl.ChatGPTController.consult
 
-def test_wait_for_response_long_text_needs_more_patience():
-    with mock.patch.object(chatgpt_consult, "js_evaluate", side_effect=_stable_long_snap):
-        t0 = time.time()
-        ok, _ = chatgpt_consult.wait_for_response("sid", 1, prev_count=1, timeout_s=10)
-        elapsed = time.time() - t0
-    assert ok is True
-    assert elapsed >= 2.8, f"expected >= 2.8s, got {elapsed:.2f}s"
+            def fake_consult(self, tab_id, prompt_text, topic, continue_url=None, stop=None):
+                captured["tab_id"] = tab_id
+                captured["prompt_text"] = prompt_text
+                captured["topic"] = topic
+                captured["continue_url"] = continue_url
+                return ("https://chatgpt.com/c/test", "reply text", "/tmp/handoff.md")
 
-def test_wait_for_response_continue_generating_max_three():
-    clicks = {"n": 0}
-    def fake_click(*args, **kwargs):
-        clicks["n"] += 1
-        return True
-    with mock.patch.object(chatgpt_consult, "js_evaluate", side_effect=_continue_snap), \
-         mock.patch.object(chatgpt_consult.time, "sleep", lambda *_a, **_k: None):
-        chatgpt_consult.wait_for_response("sid", 1, prev_count=1, timeout_s=0.05)
-    assert clicks["n"] <= 3, f"expected <= 3 clicks, got {clicks["n"]}"
+            self.ctl.ChatGPTController.consult = fake_consult
+            try:
+                # Mimic the CLI's consult(args) flow with a fake args namespace.
+                import argparse
+                args = argparse.Namespace(
+                    prompt=prompt_path,
+                    bundle=None, prompt_prefix="",
+                    attachment=[], context_path=[],
+                    continue_url=None, tab_id=12345,
+                    topic=None, register=False, capture=None,
+                )
+                self.cc.consult(args)
+                assert captured["tab_id"] == 12345
+                assert captured["prompt_text"] == "test prompt body"
+                # Topic is basename without extension; tempfile uses random names like tmpxxxx.md
+                import os as _os
+                expected_topic = _os.path.splitext(_os.path.basename(prompt_path))[0]
+                assert captured["topic"] == expected_topic, (captured["topic"], expected_topic)
+            finally:
+                self.ctl.ChatGPTController.consult = real_consult
+        finally:
+            _clean(prompt_path)
 
-def test_extract_code_blocks_returns_list_with_language_and_text():
-    fake_blocks = [{"language": "python", "text": "def hello(): pass"}, {"language": "js", "text": "console.log(1);"}]
-    with mock.patch.object(chatgpt_consult, "js_evaluate", return_value=fake_blocks):
-        out = chatgpt_consult.extract_code_blocks("sid", 1)
-    assert isinstance(out, list)
-    assert len(out) == 2
-    assert out[0]["language"] == "python"
-    assert out[1]["language"] == "js"
+    def test_consult_with_bundle_merges_prompt(self):
+        prompt_path = _make_prompt("user body")
+        try:
+            captured = {}
+            real_consult = self.ctl.ChatGPTController.consult
 
-def test_extract_reply_returns_three_tuple():
-    fake_inner = {"pageUrl": "https://chatgpt.com/c/X", "items": [{"text": "hi"}]}
-    fake_blocks = [{"language": "py", "text": "x = 1"}]
-    with mock.patch.object(chatgpt_consult, "chrome_extract", return_value=fake_inner), \
-         mock.patch.object(chatgpt_consult, "extract_code_blocks", return_value=fake_blocks):
-        result = chatgpt_consult.extract_reply("sid", 1)
-    assert isinstance(result, tuple) and len(result) == 3
-    page_url, text, code_blocks = result
-    assert page_url == "https://chatgpt.com/c/X"
-    assert text == "hi"
-    assert code_blocks == fake_blocks
+            def fake_consult(self, tab_id, prompt_text, topic, continue_url=None, stop=None):
+                captured["prompt_text"] = prompt_text
+                return ("u", "t", "p")
 
-def test_save_handoff_writes_code_blocks_section_when_present():
-    out = chatgpt_consult.save_handoff(
-        "test-topic", "https://chatgpt.com/c/TEST", "the prompt", "the response",
-        code_blocks=[{"language": "python", "text": "print(1)"}],
-    )
-    assert os.path.exists(out)
-    text = open(out, encoding="utf-8").read()
-    assert "Code blocks extracted: 1" in text
-    assert "## Code blocks (separated)" in text
-    assert "### Block 1 (python)" in text
-    assert "print(1)" in text
+            self.ctl.ChatGPTController.consult = fake_consult
+            try:
+                import argparse
+                args = argparse.Namespace(
+                    prompt=prompt_path,
+                    bundle="repo-review",
+                    prompt_prefix="", attachment=[], context_path=[],
+                    continue_url=None, tab_id=1, topic=None, register=False, capture=None,
+                )
+                self.cc.consult(args)
+                # Bundle prefix prepended; user body present; merged prompt != raw
+                assert "Review the repository carefully" in captured["prompt_text"]
+                assert "user body" in captured["prompt_text"]
+            finally:
+                self.ctl.ChatGPTController.consult = real_consult
+        finally:
+            _clean(prompt_path)
 
-def test_save_handoff_omits_code_blocks_section_when_none():
-    out = chatgpt_consult.save_handoff("no-blocks", "https://chatgpt.com/c/NB", "p", "r")
-    text = open(out, encoding="utf-8").read()
-    assert "Code blocks extracted" not in text
-    assert "## Code blocks (separated)" not in text
+    def test_consult_unknown_bundle_exits_8(self):
+        prompt_path = _make_prompt()
+        try:
+            r = subprocess.run(
+                [sys.executable, "tools/chatgpt_consult.py",
+                 "--bundle", "no-such-bundle-xyz", prompt_path],
+                capture_output=True, text=True,
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            )
+            assert r.returncode == 8
+            assert "FATAL: bundle" in r.stderr
+            assert "no-such-bundle-xyz" in r.stderr
+        finally:
+            _clean(prompt_path)
 
+    def test_capture_delegates_to_chatgpt_controller_capture(self):
+        captured = {}
+        real_capture = self.ctl.ChatGPTController.capture
+
+        def fake_capture(self, url, tab_id, topic=None):
+            captured["url"] = url
+            captured["tab_id"] = tab_id
+            captured["topic"] = topic
+            return ("https://chatgpt.com/c/test", "captured text", "/tmp/handoff.md")
+
+        self.ctl.ChatGPTController.capture = fake_capture
+        try:
+            import argparse
+            args = argparse.Namespace(
+                prompt=None, capture="https://chatgpt.com/c/abc",
+                bundle=None, prompt_prefix="", attachment=[], context_path=[],
+                continue_url=None, tab_id=999, topic="my-topic", register=False,
+            )
+            self.cc.capture(args)
+            assert captured["url"] == "https://chatgpt.com/c/abc"
+            assert captured["tab_id"] == 999
+            assert captured["topic"] == "my-topic"
+        finally:
+            self.ctl.ChatGPTController.capture = real_capture
+
+    def test_register_conversation_appends_entry(self):
+        import json
+        # Create a temp ai-conversations.json
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            json.dump({"conversations": [], "_system_incidents": []}, f)
+            state_file = f.name
+        try:
+            # Patch STATE_FILE in chatgpt_consult
+            orig_state = self.cc.STATE_FILE
+            self.cc.STATE_FILE = state_file
+            try:
+                self.cc.register_conversation(
+                    "test-proj", "https://chatgpt.com/c/xyz", "topic-x",
+                    notes="unit test",
+                )
+                d = json.load(open(state_file, encoding="utf-8"))
+                assert len(d["conversations"]) == 1
+                entry = d["conversations"][0]
+                assert entry["project"] == "test-proj"
+                assert entry["url"] == "https://chatgpt.com/c/xyz"
+                assert entry["topic"] == "topic-x"
+                assert entry["incident"] is None
+                assert entry["notes"] == "unit test"
+            finally:
+                self.cc.STATE_FILE = orig_state
+        finally:
+            _clean(state_file)
+
+    def test_register_conversation_returns_false_on_missing_file(self):
+        orig_state = self.cc.STATE_FILE
+        self.cc.STATE_FILE = "/nonexistent/path/ai-conversations.json"
+        try:
+            assert self.cc.register_conversation("p", "u", "t") is False
+        finally:
+            self.cc.STATE_FILE = orig_state
+
+    def test_consult_without_register_skips_register(self):
+        prompt_path = _make_prompt()
+        try:
+            captured_consult = {}
+            real_consult = self.ctl.ChatGPTController.consult
+            real_register = self.cc.register_conversation
+
+            def fake_consult(self, tab_id, prompt_text, topic, continue_url=None, stop=None):
+                captured_consult["called"] = True
+                return ("u", "t", "p")
+            self.ctl.ChatGPTController.consult = fake_consult
+            called_register = []
+            def fake_register(*a, **k):
+                called_register.append((a, k))
+            self.cc.register_conversation = fake_register
+            try:
+                import argparse
+                args = argparse.Namespace(
+                    prompt=prompt_path,
+                    bundle=None, prompt_prefix="",
+                    attachment=[], context_path=[],
+                    continue_url=None, tab_id=1, topic=None, register=False, capture=None,
+                )
+                self.cc.consult(args)
+                assert captured_consult.get("called") is True
+                assert called_register == []
+            finally:
+                self.ctl.ChatGPTController.consult = real_consult
+                self.cc.register_conversation = real_register
+        finally:
+            _clean(prompt_path)
+
+    def test_consult_with_register_calls_register(self):
+        prompt_path = _make_prompt()
+        try:
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+                json.dump({"conversations": [], "_system_incidents": []}, f)
+                state_file = f.name
+            orig_state = self.cc.STATE_FILE
+            self.cc.STATE_FILE = state_file
+            try:
+                captured_consult = {}
+                real_consult = self.ctl.ChatGPTController.consult
+                def fake_consult(self, tab_id, prompt_text, topic, continue_url=None, stop=None):
+                    captured_consult["topic"] = topic
+                    return ("https://chatgpt.com/c/test", "reply", "/tmp/handoff.md")
+                self.ctl.ChatGPTController.consult = fake_consult
+                try:
+                    import argparse
+                    args = argparse.Namespace(
+                        prompt=prompt_path,
+                        bundle=None, prompt_prefix="",
+                        attachment=[], context_path=[],
+                        continue_url=None, tab_id=1, topic="explicit-topic",
+                        register=True, capture=None,
+                    )
+                    self.cc.consult(args)
+                    d = json.load(open(state_file, encoding="utf-8"))
+                    assert len(d["conversations"]) == 1
+                    assert d["conversations"][0]["topic"] == "explicit-topic"
+                finally:
+                    self.ctl.ChatGPTController.consult = real_consult
+            finally:
+                self.cc.STATE_FILE = orig_state
+                _clean(state_file)
+        finally:
+            _clean(prompt_path)
