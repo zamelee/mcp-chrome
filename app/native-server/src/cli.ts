@@ -13,6 +13,7 @@ import {
 import { BrowserType, parseBrowserType, detectInstalledBrowsers } from './scripts/browser-config';
 import { runDoctor } from './scripts/doctor';
 import { runReport } from './scripts/report';
+import { ensureChrome } from './scripts/ensure-chrome';
 import server from './server';
 import nativeHost from './native-messaging-host';
 
@@ -236,6 +237,9 @@ program
   .option('-p, --port <port>', 'Port to listen on', '12306')
   .action(async (options) => {
     try {
+      // Auto-launch Chrome if not running (Plan 3 of GO-all batch).
+      // No --remote-debugging-port needed: mcp-chrome uses native messaging + chrome.debugger API.
+      await ensureChrome();
       const port = parseInt(options.port, 10);
       server.setNativeHost(nativeHost);
       nativeHost.setServer(server);
