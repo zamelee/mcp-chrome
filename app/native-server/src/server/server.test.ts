@@ -2,6 +2,7 @@ import { describe, expect, test, afterAll, beforeAll } from '@jest/globals';
 import supertest from 'supertest';
 import Server from './index';
 import { getLatestExtensionConnection } from '../control-state';
+import { _resetControlStateForTests } from '../control-state';
 
 describe('服务器测试', () => {
   // 启动服务器测试实例
@@ -128,6 +129,35 @@ describe('Plan 1.3 - bridge 控制面 /internal/* endpoints', () => {
     const latest = getLatestExtensionConnection();
     expect(latest).toBeDefined();
     expect(latest?.extensionId).toBe('test-ext-plan13-latest-B');
+  });
+
+  test('GET /health 应返回 bridgeInstanceId + extension null (未注册时)', async () => {
+    _resetControlStateForTests();
+    const response = await supertest(Server.getInstance().server).get('/health').expect(200);
+    expect(response.body.status).toBe('ok');
+    expect(typeof response.body.bridgeInstanceId).toBe('string');
+    expect(response.body.bridgeInstanceId.length).toBeGreaterThan(0);
+    expect(typeof response.body.uptimeMs).toBe('number');
+    expect(response.body.extension).toBeNull();
+  });
+
+  test('GET /health 在 extension 注册后返回 connection 快照', async () => {
+    await supertest(Server.getInstance().server)
+      .post('/internal/register')
+      .send({
+        extensionId: 'test-ext-health-snapshot',
+        version: '1.7.0',
+        liveTargets: ['1', '2', '3'],
+      })
+      .expect(200);
+
+    const response = await supertest(Server.getInstance().server).get('/health').expect(200);
+    expect(response.body.extension).not.toBeNull();
+    expect(response.body.extension.extensionId).toBe('test-ext-health-snapshot');
+    expect(response.body.extension.version).toBe('1.7.0');
+    expect(response.body.extension.liveTargetCount).toBe(3);
+    expect(typeof response.body.extension.heartbeatAgeMs).toBe('number');
+    expect(response.body.extension.heartbeatAgeMs).toBeGreaterThanOrEqual(0);
   });
 
   test('formatToolError 返回 isError:true + 结构化 code/recoverable/bridgeInstanceId', () => {

@@ -44,7 +44,11 @@ import {
   safetyLevelFor,
   SafetyLevel,
 } from '../tool-safety';
-import { recordExtensionConnection, getExtensionConnection } from '../control-state';
+import {
+  recordExtensionConnection,
+  getExtensionConnection,
+  getLatestExtensionConnection,
+} from '../control-state';
 
 // ============================================================
 // Types
@@ -141,7 +145,6 @@ export class Server {
   // ============================================================
   // Health Routes
   // ============================================================
-
   private setupHealthRoutes(): void {
     this.fastify.get('/ping', async (_request: FastifyRequest, reply: FastifyReply) => {
       reply.status(HTTP_STATUS.OK).send({
@@ -149,6 +152,42 @@ export class Server {
         message: 'pong',
       });
     });
+
+    // Plan 2.4: GET /health — diagnostic surface for "is the bridge alive and
+    // talking to a live extension?". Returns bridgeInstanceId (Plan 1.1),
+    // uptime, and the most recent extension connection snapshot. Clients
+    // (CLI, dashboard, CodeX mcp__mcp_chrome tool) can poll this to detect
+    // reload-staleness without going through the full MCP initialize flow.
+    this.fastify.get('/health', async (_request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const conn = getLatestExtensionConnection();
+        const heartbeatAgeMs = conn ? Date.now() - conn.lastHeartbeat : null;
+        const liveTargetCount = conn ? conn.liveTargets.size : 0;
+        reply.status(HTTP_STATUS.OK).send({
+          status: 'ok',
+          bridgeInstanceId: this.bridgeInstanceId,
+          serverStartedAt: this.startedAt,
+          uptimeMs: Date.now() - this.startedAt,
+          extension: conn
+            ? {
+                extensionId: conn.extensionId,
+                version: conn.version,
+                connectedAt: conn.connectedAt,
+                lastHeartbeat: conn.lastHeartbeat,
+                heartbeatAgeMs,
+                liveTargetCount,
+              }
+            : null,
+        });
+      } catch (err) {
+        console.error('[bridge] /health handler failed:', err);
+        reply.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).send({
+          status: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+
     this.fastify.get(
       '/status',
       async (request: FastifyRequest<{ Querystring: { probe?: string } }>, reply: FastifyReply) => {
