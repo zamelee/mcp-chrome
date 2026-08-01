@@ -5,10 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.7.0-unreleased] - 2026-07-30
+## [v1.7.0] - 2026-08-01
 
 ### Added
 
+- **chatgpt_consult flush polish** (Step 3 follow-up, observability fix).
+  tools/chatgpt_consult.py 4 print() calls (consult done/reply/handoff +
+  capture captured) now use `flush=True` to prevent stdout buffer loss when the
+  process is killed by SIGTERM / shell timeout. FATAL stderr print unchanged
+  (stderr unbuffered by default). Discovered during Step 3 e2e smoke test
+  where chatgpt_consult.py actually completed in <30s but stdout never appeared
+  before 180s shell timeout — making it look like the process was stuck.
+  Commit: 9bf67fe (work/zamelee-bootstrap). Tests: Python 95/95 (no regression).
+- **chatgpt_consult refactor as thin CLI wrapper** (Step 3 / Patch 6 follow-up).
+  tools/chatgpt_consult.py collapsed from 378 lines self-contained to 151 lines
+  CLI wrapper. All vendor-specific logic (ProseMirror composer, Continue generating
+  auto-click, dynamic stable threshold, sha1 injection verify, MCP transport wiring)
+  now lives ONLY in tools/chatgpt_controller.py (subclass of Patch 6 VendorControllerBase).
+  The CLI surface keeps argparse + bundle merge (Patch 5) + ai-conversations.json
+  append (--register) + delegation to controller.consult() / .capture().
+  tools/chatgpt_controller.py gains capture(url, tab_id, topic) reusing the
+  VendorControllerBase.consult() orchestrator pattern (read-only, no prompt injection).
+  tools/test_chatgpt_consult.py rewritten: 9 new CLI delegation tests replace 7
+  legacy function tests (legacy functions were removed). tools/test_chatgpt_consult_use_controller.py
+  deleted (--use-controller flag removed — controller is now default path).
+  Full Python suite: 95/95 (bundles 30 + chatgpt_consult 9 + selectors 24 + vendor_base 32).
+  Native jest suite: 35/35 (Patch 1 popup-gate + Patch 3 browser-config unchanged).
+  E2E smoke verified: Codex → MCP bridge → real Chrome → chatgpt.com (logged-in LEE) →
+  ChatGPT reply "smoke-ok-2026-08-01" + "cli-wrapper-ok-2026-08-01" (sha1 norm 严丝合缝).
+  Commit: 48e8982 (work/zamelee-bootstrap). Closes Patch 6 architecture loop.
+  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 3.
 - **Per-vendor controller base class** (Patch 6 of 6 from agentify-sh/desktop deep-dive).
   New tools/vendor_base.py (~280 lines) provides VendorControllerBase ABC with 6
   abstract methods (_vendor_name / _get_allowed_host / _build_reply_selector /
@@ -40,24 +66,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stopButton, assistantMessage, composerRoot) with 5-13 fallback CSS selectors each
   (13/11/6/8/5 respectively, totaling 43 fallbacks). tools/selectors.py exposes
   load_selectors() + validate_selectors() + get_selector() + get_primary_fallback()
-  + compose_message_selector() with override path support (~/.codex/selectors.override.json).
-  tools/chatgpt_consult.py REPLY_SELECTOR migrated to use compose_message_selector(),
-  keeping the legacy hardcoded format as a chr()-based fallback when running outside
-  tools/. Test matrix: 24 cases in tools/test_selectors.py (all green) + 7/7 from
-  Patch 2 (no regression).
-  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 2.4.
+  - compose_message_selector() with override path support (~/.codex/selectors.override.json).
+    tools/chatgpt_consult.py REPLY_SELECTOR migrated to use compose_message_selector(),
+    keeping the legacy hardcoded format as a chr()-based fallback when running outside
+    tools/. Test matrix: 24 cases in tools/test_selectors.py (all green) + 7/7 from
+    Patch 2 (no regression).
+    Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 2.4.
 - **findChromeExecutable port** (Patch 3 of 6 from agentify-sh/desktop deep-dive).
   app/native-server/src/scripts/browser-config.ts extends BrowserType enum with
   BRAVE / EDGE (in addition to CHROME / CHROMIUM). Adds 3 new exports:
   resolveBrowserExecutable(browser) returns the first existing candidate path
   (Windows: 3 ProgramFiles + 3 ProgramFiles(x86) + LOCALAPPDATA variants;
-  macOS: /Applications/*.app/Contents/MacOS/*; Linux: /usr/bin/*); findChromeExecutable(explicitPath?)
+  macOS: /Applications/_.app/Contents/MacOS/_; Linux: /usr/bin/*); findChromeExecutable(explicitPath?)
   with explicit-path short-circuit + priority chain (Chrome > Chromium > Brave > Edge)
-  + PATH fallback via where/which; chromeSpawnOptions(platform?) returns
-  {detached:true, stdio:'ignore', windowsHide:true} on Windows (per agentify-sh
-  v0.2.4 regression fix). Throws ChromeBinaryNotFoundError with searchedPaths
-  for diagnostics. Test matrix: 15 cases in browser-config.test.ts (all green).
-  Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 2.3.
+  - PATH fallback via where/which; chromeSpawnOptions(platform?) returns
+    {detached:true, stdio:'ignore', windowsHide:true} on Windows (per agentify-sh
+    v0.2.4 regression fix). Throws ChromeBinaryNotFoundError with searchedPaths
+    for diagnostics. Test matrix: 15 cases in browser-config.test.ts (all green).
+    Plan + context: plans/2026-07-30-agentify-sh-deep-dive-patch-plan.md section 2.3.
 - **chatgpt_consult waitForAssistantStable** (Patch 2 of 6 from agentify-sh/desktop deep-dive).
   tools/chatgpt_consult.py upgrades wait_for_response with dynamic text-stable
   threshold (1500/2200/3000 ms by length) + Continue generating button auto-click
@@ -79,7 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **native-server test build infra** — 	sconfig.json adds isolatedModules: true
+- **native-server test build infra** — sconfig.json adds isolatedModules: true
   and jest.config.js adds a moduleNameMapper that rewrites NodeNext ESM-style
   .js import specifiers to .ts at resolution time, plus pins ts-jest to
   CommonJS at test time. Without these, src/server/server.test.ts cannot
