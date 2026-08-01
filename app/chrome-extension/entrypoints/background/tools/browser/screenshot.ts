@@ -283,7 +283,9 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
       } catch (e) {
         console.warn('Failed to set screenshot context:', e);
       }
-      if (storeBase64 === true) {
+      // storeBase64 (default true) only applies when no explicit savePath/savePng requested.
+      // savePath has precedence: opt-in disk write skips base64 early return so atomic rename can run.
+      if (storeBase64 === true && !args.savePath && savePng !== true) {
         // Compress image for base64 output to reduce size
         const compressed = await compressImage(finalImageDataUrl, {
           scale: 0.7, // Reduce dimensions by 30%
