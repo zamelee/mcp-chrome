@@ -35,6 +35,16 @@
 
 查看 [完整更新日志](docs/CHANGELOG.md) 了解所有版本变更。
 
+## 📢 v1.8.0 更新内容
+
+> **web-editor-v2 Token Pill 绑定 (Phase 5.3)** - 当属性值为 `var(--xxx)` 时,自动切换为可点击 pill,点击打开 TokenPicker 选择/切换/清除 token 绑定。已接入 5 个控件:size / spacing / position / layout / appearance。新增 helper 模块 `controls/token-value-helper.ts`,每个控件通过自己的 TransactionManager 决定如何写 inline style。
+>
+> - 📌 **可视化切换** - 数值输入框自动 hide,pill 带 hover-clear。
+> - ⚙ **复用已有组件** - `components/token-pill.ts` (Phase 5.0) + `controls/token-picker.ts` dropdown,property-panel 透传 tokensService。
+> - ✅ **vitest 491/491 全绿** (+5 个新测试,40 个测试文件,无回归)
+
+查看 [完整更新日志](docs/CHANGELOG.md) 了解所有版本变更。
+
 ---
 
 ## 📢 v1.6.1 更新内容

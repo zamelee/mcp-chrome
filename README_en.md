@@ -35,6 +35,16 @@
 
 See the [full changelog](docs/CHANGELOG.md) for all version changes.
 
+## 📢 What is New in v1.8.0
+
+> **web-editor-v2 Token Pill binding (Phase 5.3)** - When a property CSS value is `var(--xxx)`, swap the numeric/slider input for a clickable pill that opens a TokenPicker. Hover shows a clear (x) button to detach the binding. Wired into 5 controls: size / spacing / position / layout / appearance.
+>
+> - 📌 **Visual mode toggle** - numeric input auto-hidden when value is var(), pill takes over.
+> - ⚙ **Reuses existing components** - `components/token-pill.ts` (Phase 5.0) + `controls/token-picker.ts` dropdown, property-panel passes tokensService through.
+> - ✅ **vitest 491/491 green** (+5 new tests, 40 test files, no regression)
+
+See the [full changelog](docs/CHANGELOG.md) for all version changes.
+
 ---
 
 ## 📢 What's New in v1.6.1

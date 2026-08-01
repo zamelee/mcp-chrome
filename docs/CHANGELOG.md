@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.8.0] - 2026-08-01
+
+### Added
+
+- **web-editor-v2 Token Pill binding (Phase 5.3 of attr-ui-refactor)** - When a property CSS value is ar(--xxx), swap the numeric/slider input for a clickable pill that opens a TokenPicker. Hover shows a clear (x) button to detach the var() reference and fall back to the computed value. Wired into the 5 main length/value controls (size, spacing, position, layout, appearance). New helper module controls/token-value-helper.ts exposes createTokenValueDisplay({ valueHolders, ariaLabel, tokensService, tokenKind, onTokenSelected, onTokenCleared }) so each control can decide its own TransactionManager pipeline (CSS var write vs inline detach). Token kind filter for the picker dropdown: length for size/spacing/position, ll for z-index/opacity. Existing pill component components/token-pill.ts (Phase 5.0) reused; picker dropdown reuses controls/token-picker.ts. property-panel.ts passes okensService through to all 5 controls. 5 vitest unit tests covering syncValue mode toggle, callback forwarding, dispose teardown. Full vitest suite: 491/491 (40 files, +5 from Phase 5.3 wiring), no regression. References: ttr-ui-refactor.md section 5.3.
+
 ## [v1.7.1] - 2026-08-01
 
 ### Fixed
