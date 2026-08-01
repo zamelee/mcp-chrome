@@ -24,6 +24,17 @@
   </b>
 </p>
 
+## 📢 What is New in v1.7.1
+
+> **bridge reload regression fixed** - root cause was three `console.log` calls reachable from the native-messaging host child path that wrote plain text to stdout, corrupting Chrome length-prefixed JSON frame stream. Chrome read `[bri` (~1.5 GB) as a length header, treated it as invalid, and tore down the host child immediately, leaving the popup stuck on Connected, Service Not Started.
+>
+> - 🔧 **3 pollution sites fixed** - `server/index.ts:598`, `native-messaging-host.ts:395`, `server/index.ts:506` `console.log` calls all routed to `process.stderr.write` (AGENTS.md 0b.7.7). Commits `ecbd800` + `ef8dab1`.
+> - 🔄 **processAvailable FIFO ordering** - `handleMessage` was not awaited, so sync `sendMessage` (e.g. pong) could reach stdout before async SERVER_STARTED.
+> - 📖 **doc fix** - extension-reload.md claim Codex auto-reinitializes on 400 was wrong; Codex client does not auto-reconnect after extension reload.
+> - ✅ **Tests 53/53 Jest + 95/95 Python still green**
+
+See the [full changelog](docs/CHANGELOG.md) for all version changes.
+
 ---
 
 ## 📢 What's New in v1.6.1

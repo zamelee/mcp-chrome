@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.1] - 2026-08-01
+
+### Fixed
+
+- **native-messaging host stdout pollution (root cause of the Connected, Service Not Started regression)**
+  - Three `console.log` calls reachable from the native-messaging host child path were writing plain text to stdout, corrupting Chrome length-prefixed JSON frame stream. Chrome read the leading bytes (`[bri` = `0x5b627269`, ~1.5 GB) as a length header, saw it as invalid, and tore down the host child immediately. Every host child died within ~1s with `Exit code: 0`, stderr 0 bytes, port 12306 never bound, and the extension popup stuck on Connected, Service Not Started forever. All three sites routed to `process.stderr` (which `run_host.bat` redirects to `native_host_stderr_*.log`):
+    - `app/native-server/src/server/index.ts:598` - `[bridge] new epoch: <uuid>` log in `Server.start()`. Runs synchronously before the first `SERVER_STARTED` frame; corrupts every startup. Commit `ecbd800`.
+    - `app/native-server/src/native-messaging-host.ts:395` - `Connection closed; bridge shutting down.` log in `cleanup()`. Fires on stdin EOF during normal reload exit. Commit `ecbd800`.
+    - `app/native-server/src/server/index.ts:506` - `extension registered: id=...` log in the `/internal/register` HTTP handler. After the first register, any subsequent `sendMessage` (pong, future tool push) reaches Chrome with a corrupted length header, causing the host child to be torn down mid-session and producing a reconnect storm where `scheduleReconnect` spawned a fresh host child every ~5s. Commit `ef8dab1`.
+  - **`processAvailable` FIFO ordering** - `setupMessageHandling` called `this.handleMessage(message)` without `.catch()`. `handleMessage` is async (it can `await startServer`), so a synchronous `sendMessage` inside it (e.g. `pong_to_extension` reply for a ping) could reach stdout before the pending async `SERVER_STARTED` frame finished. Chrome parser is order-tolerant, but the contract should be honest and end-to-end test/debug tooling depends on FIFO ordering. Now awaited with a structured `ERROR_FROM_NATIVE_HOST` frame on rejection so errors do not pollute the protocol stream. Commit `ef8dab1`.
+  - **`docs/wiki/extension-reload.md` Codex auto-reinit claim** - Previously stated Codex re-initializes automatically on 400 via the bridge HTTP retry. Empirically false: the Codex desktop MCP transport closes on extension reload and does not auto-reconnect, so state-changing tool calls return `SESSION_EXPIRED` (Plan 1.4 semantic error) until Codex is restarted. Replaced with an accurate read-only vs state-changing split so the next handoff does not waste time believing the old claim.
+
+Verified with a Python harness that emulates Chrome `connectNative`:
+
+- spawn host child + START + ping
+- stdout frames in FIFO order: `server_started`, `pong_to_extension`
+- host child stays alive after 4s, stderr empty, clean exit 0 on stdin EOF
+- `/health` returns 200 with new `bridgeInstanceId` per process start
+
+Tests: Jest 53/53 (app/native-server) + Python 95/95 (tools/) still green. Popup flips from Connected, Service Not Started to Service Running (HTTP 12306) after reload; `/health` returns `extension.heartbeatAgeMs` ticking down every 60s.
+
 ## [v1.7.0] - 2026-08-01
 
 ### Added

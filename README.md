@@ -24,6 +24,17 @@
   </b>
 </p>
 
+## 📢 v1.7.1 更新内容
+
+> **bridge reload 修好了** - 根因是 native-messaging host child 路径下三个 `console.log` 写到 stdout,污染 Chrome length-prefixed JSON frame stream。Chrome 读 `[bri` 当 length header(~1.5 GB),视为非法立即关 host child,popup 卡在 Connected, Service Not Started。
+>
+> - 🔧 **3 个污染点** - `server/index.ts:598`、`native-messaging-host.ts:395`、`server/index.ts:506` 的 console.log 全部改 `process.stderr.write` (AGENTS.md 0b.7.7)。Commit `ecbd800` + `ef8dab1`。
+> - 🔄 **processAvailable FIFO 修复** - `handleMessage` 之前不 await,sync `sendMessage` (如 pong) 可能先于 async SERVER_STARTED 写 stdout。
+> - 📖 **文档修正** - extension-reload.md 的 Codex 自动 reinit 说法是错的,实测 Codex client 不会自动重连。
+> - ✅ **测试 53/53 + Python 95/95 全绿**
+
+查看 [完整更新日志](docs/CHANGELOG.md) 了解所有版本变更。
+
 ---
 
 ## 📢 v1.6.1 更新内容

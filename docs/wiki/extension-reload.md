@@ -26,7 +26,9 @@ What happens, in order:
 What this means for `mcp__mcp_chrome__*` tool calls:
 
 - Calls that arrive **before step 5 completes** (typically 1-2 seconds after Reload) may receive an HTTP 400 or a stale session error.
-- Once the new bridge is up, the **first** call from Codex will succeed (Codex re-initializes automatically on 400 via the bridge HTTP retry).
+- Once the new bridge is up:
+  - **Read-only** calls (`chrome_get_tab_url`, `chrome_read_page`, `chrome_extract`, `chrome_get_scroll_state`, etc.) work immediately — they do not depend on MCP session id.
+  - **State-changing** calls (`chrome_navigate`, `chrome_click_element`, `chrome_screenshot`, etc.) return `SESSION_EXPIRED` until you restart Codex desktop. The bridge returns this as a deliberate semantic error (Plan 1.4) so clients can re-init cleanly; the current Codex desktop MCP transport closes on extension reload and does not auto-reconnect, so a Codex restart is required to recover write capability.
 - **Recommended:** wait ~3 seconds after Reload before issuing tool calls. Or run `mcp-chrome-bridge doctor` to confirm the bridge is healthy.
 
 What you do **not** need to do:
@@ -88,20 +90,20 @@ curl http://127.0.0.1:12306/health
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `mcp__mcp_chrome__*` returns HTTP 400 right after Reload | Old MCP session id; new bridge not yet up | Wait 2-3 seconds, retry. Or `mcp-chrome-bridge doctor` to confirm health. |
-| `mcp__mcp_chrome__*` consistently returns 400 for >10s | New bridge failed to bind 12306 (port in use) | `netstat -ano | findstr 12306` on Windows; kill stale process. |
-| `chrome_screenshot` returns base64 but file is not at the path I gave | `savePath` integration is in commit `013be6e`; your bridge is older | `git pull` and rebuild native-server + reload extension. |
-| `[ensure-chrome] Failed to spawn Chrome; user must start it manually` | `chrome.exe` not in `PATH` | Add Chrome to PATH, or call `mcp-chrome-bridge register` once after fixing. |
-| `tasklist` returns `INFO: No tasks are running which match the specified criteria.` | Chrome not running (expected) | The `ensure-chrome` logic will spawn it; if that also failed, start Chrome manually. |
+| Symptom                                                                             | Likely cause                                                        | Fix                                                                                  |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `mcp__mcp_chrome__*` returns HTTP 400 right after Reload                            | Old MCP session id; new bridge not yet up                           | Wait 2-3 seconds, retry. Or `mcp-chrome-bridge doctor` to confirm health.            |
+| `mcp__mcp_chrome__*` consistently returns 400 for >10s                              | New bridge failed to bind 12306 (port in use)                       | `netstat -ano                                                                        | findstr 12306` on Windows; kill stale process. |
+| `chrome_screenshot` returns base64 but file is not at the path I gave               | `savePath` integration is in commit `013be6e`; your bridge is older | `git pull` and rebuild native-server + reload extension.                             |
+| `[ensure-chrome] Failed to spawn Chrome; user must start it manually`               | `chrome.exe` not in `PATH`                                          | Add Chrome to PATH, or call `mcp-chrome-bridge register` once after fixing.          |
+| `tasklist` returns `INFO: No tasks are running which match the specified criteria.` | Chrome not running (expected)                                       | The `ensure-chrome` logic will spawn it; if that also failed, start Chrome manually. |
 
 ## Compatibility matrix
 
-| Client | Needs `--remote-debugging-port=9222`? | Compatible with `mcp-chrome`? |
-|---|---|---|
-| `mcp-chrome-bridge` (this project) | No | Yes (native messaging + extension-internal CDP) |
-| `chrome-devtools-mcp` | Yes (external CDP) | No (separate tool) |
-| `puppeteer` / `playwright` | Yes (external CDP) | No (separate tool) |
+| Client                             | Needs `--remote-debugging-port=9222`? | Compatible with `mcp-chrome`?                   |
+| ---------------------------------- | ------------------------------------- | ----------------------------------------------- |
+| `mcp-chrome-bridge` (this project) | No                                    | Yes (native messaging + extension-internal CDP) |
+| `chrome-devtools-mcp`              | Yes (external CDP)                    | No (separate tool)                              |
+| `puppeteer` / `playwright`         | Yes (external CDP)                    | No (separate tool)                              |
 
 If you later add a `chrome-devtools-mcp` style server in the same project, you would add `--remote-debugging-port=9222` to `ensureChrome()` in `app/native-server/src/scripts/ensure-chrome.ts`. For now, **do not** add it.
