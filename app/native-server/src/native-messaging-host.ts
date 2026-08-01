@@ -101,7 +101,23 @@ export class NativeMessagingHost {
 
         try {
           const message = JSON.parse(messageBuffer.toString());
-          this.handleMessage(message);
+          // CRITICAL: handleMessage is async (it can await startServer etc).
+          // Without awaiting, a synchronous sendMessage call inside
+          // handleMessage (e.g. the pong_to_extension reply for a ping) can
+          // reach stdout before a pending async sendMessage (e.g. the
+          // SERVER_STARTED frame) finishes. Chrome native-messaging parser
+          // is order-tolerant for individual frames, but the contract should
+          // be honest and end-to-end test/debug tooling that watches frames
+          // in real time depends on FIFO ordering. Errors are surfaced via
+          // sendError(), which writes a structured ERROR_FROM_NATIVE_HOST
+          // frame (not stderr) so we do not pollute the protocol stream.
+          this.handleMessage(message).catch((err: unknown) => {
+            this.sendError(
+              `Failed to handle directive message: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
         } catch (error: any) {
           this.sendError(`Failed to parse message: ${error.message}`);
         }

@@ -503,9 +503,16 @@ export class Server {
         liveTargets,
         markHeartbeat: true,
       });
-      console.log(
+      // CRITICAL: native-messaging host child uses stdout strictly for length-
+      // prefixed JSON frames. console.log writes to stdout and corrupts the
+      // frame stream, so any subsequent frame the host sends (e.g. pong in
+      // response to extension ping) will be read by Chrome with a corrupted
+      // length header and trigger an immediate native-messaging disconnect.
+      // Always mirror this pattern for any log reachable from a path the
+      // host can take after start().
+      process.stderr.write(
         `[bridge] extension registered: id=${extensionId} version=${version} ` +
-          `targets=${conn.liveTargets.size} epoch=${this.bridgeInstanceId}`,
+          `targets=${conn.liveTargets.size} epoch=${this.bridgeInstanceId}\n`,
       );
       reply.code(HTTP_STATUS.OK).send({
         success: true,
