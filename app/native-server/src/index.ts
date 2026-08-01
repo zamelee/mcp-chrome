@@ -72,6 +72,14 @@ process.on('SIGBREAK', ignoreSignal);
 process.on('exit', (code) => {});
 
 process.on('uncaughtException', (error) => {
+  process.stderr.write('[bridge] uncaught=' + String(error) + String.fromCharCode(10));
+  // EPIPE (broken pipe on stdout) happens when Chrome disconnects its native
+  // messaging stdout before we finish writing. Don't exit the bridge over it -
+  // the fastify HTTP server keeps the event loop alive on its own.
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'EPIPE') {
+    return;
+  }
   process.exit(1);
 });
 
