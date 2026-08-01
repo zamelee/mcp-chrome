@@ -30,7 +30,7 @@ export class FileHandler {
           if (fileUrl) {
             return await this.downloadFile(fileUrl, fileName);
           } else if (base64Data) {
-            return await this.saveBase64File(base64Data, fileName);
+            return await this.saveBase64File(base64Data, fileName, filePath);
           } else if (filePath) {
             return await this.verifyFile(filePath);
           }
@@ -107,7 +107,7 @@ export class FileHandler {
   /**
    * Save base64 data as a file
    */
-  private async saveBase64File(base64Data: string, fileName?: string): Promise<any> {
+  private async saveBase64File(base64Data: string, fileName?: string, filePath?: string): Promise<any> {
     try {
       // Remove data URL prefix if present
       const base64Content = base64Data.replace(/^data:.*?;base64,/, '');
@@ -116,18 +116,35 @@ export class FileHandler {
       const buffer = Buffer.from(base64Content, 'base64');
 
       // Generate filename if not provided
-      const finalFileName = fileName || `upload-${Date.now()}.bin`;
-      const filePath = path.join(this.tempDir, finalFileName);
+        // Explicit absolute path: atomic write-rename per AGENTS.md §10 F-AtomicWrite
+        // (avoid OOM/SIGKILL half-write corruption).
+        if (filePath) {
+          const finalFilePath = path.resolve(filePath);
+          const tmpPath = `${finalFilePath}.tmp-${process.pid}-${Date.now()}`;
+          fs.writeFileSync(tmpPath, buffer);
+          fs.renameSync(tmpPath, finalFilePath);
+          return {
+            success: true,
+            filePath: finalFilePath,
+            fileName: path.basename(finalFilePath),
+            size: buffer.length,
+            viaAtomicWrite: true,
+          };
+        }
 
-      // Save to file
-      fs.writeFileSync(filePath, buffer);
+        // Default: tempDir fallback (legacy behavior, used for chat file uploads)
+        const finalFileName = fileName || `upload-${Date.now()}.bin`;
+        const tempFilePath = path.join(this.tempDir, finalFileName);
 
-      return {
-        success: true,
-        filePath: filePath,
-        fileName: finalFileName,
-        size: buffer.length,
-      };
+        // Save to file
+        fs.writeFileSync(tempFilePath, buffer);
+
+        return {
+          success: true,
+          filePath: tempFilePath,
+          fileName: finalFileName,
+          size: buffer.length,
+        };
     } catch (error) {
       throw new Error(`Failed to save base64 file: ${error}`);
     }

@@ -485,7 +485,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         storeBase64: {
           type: 'boolean',
           description:
-            'return screenshot in base64 format (default: false) if you want to see the page, recommend set this to be true',
+            'return screenshot in base64 format (default: true). To save to disk, pass savePath instead of savePng.',
         },
         fullPage: {
           type: 'boolean',
@@ -494,7 +494,12 @@ export const TOOL_SCHEMAS: Tool[] = [
         savePng: {
           type: 'boolean',
           description:
-            'Save screenshot as PNG file (default: true)，if you want to see the page, recommend set this to be false, and set storeBase64 to be true',
+            'Save screenshot via Chrome download API (default: false; may trigger Save As dialog on some Chrome versions). Prefer savePath for headless disk writes.',
+        },
+        savePath: {
+          type: 'string',
+          description:
+              'Absolute filesystem path. When set, writes the PNG via native host fs.writeFileSync + atomic rename (per AGENTS.md §0b.7.7 F-ScreenshotSavePath). Returns {filePath, size}. Bypasses chrome.downloads entirely. Default (no savePath): zero disk writes, returns base64 only.',
         },
       },
       required: [],

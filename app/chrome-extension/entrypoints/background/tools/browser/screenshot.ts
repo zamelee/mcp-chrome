@@ -54,6 +54,7 @@ interface ScreenshotToolParams {
   storeBase64?: boolean;
   fullPage?: boolean;
   savePng?: boolean;
+  savePath?: string; // Absolute filesystem path to write the PNG. Bypasses Chrome download API.
   maxHeight?: number; // Maximum height to capture in pixels (for infinite scroll pages)
 }
 
@@ -115,9 +116,10 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
     const {
       name = 'screenshot',
       selector,
-      storeBase64 = false,
+      storeBase64 = true,    // default: return base64 directly, no Save As dialog
       fullPage = false,
-      savePng = true,
+      savePng = false,       // default: do not trigger chrome.downloads.saveAs
+      savePath,              // explicit disk write goes via bridge Node fs, bypasses Chrome download API
     } = args;
 
     console.log(`Starting screenshot with options:`, args);
@@ -303,13 +305,40 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
         };
       }
 
-      if (savePng === true) {
-        // Save PNG file to downloads
+      // savePath: opt-in disk write via native host fs (atomic write-rename, AGENTS.md §0b.7.7).
+      // Bypasses chrome.downloads entirely to avoid Save As dialog.
+      // Default: zero disk writes (returns base64 only).
+      if (args.savePath) {
+        this.logInfo(`Saving PNG to ${args.savePath} via native host...`);
+        try {
+          // Strip data URL prefix; file-handler accepts both formats.
+          const rawBase64 = finalImageDataUrl.replace(/^data:image\/[^;]+;base64,/, '');
+          const saveResult = await this._saveViaNativeHost(rawBase64, args.savePath);
+          if (saveResult) {
+            results.fileSaved = true;
+            results.filePath = saveResult.filePath;
+            results.size = saveResult.size;
+            results.viaAtomicWrite = true;
+          } else {
+            results.saveError = 'Native host file save failed (timeout or connection error)';
+          }
+        } catch (error) {
+          console.error('Error saving PNG via native host:', error);
+          results.saveError = String(error instanceof Error ? error.message : error);
+        }
+      } else if (savePng === true) {
+        // LEGACY: chrome.downloads API (may trigger Save As dialog, deprecated per
+        // AGENTS.md §0b.7.7). Prefer savePath for headless disk writes.
+        // - savePng=true uses Chrome download API (may prompt Save As on some Chrome versions)
+        //   chrome.downloads API. Full bridge-Node fs write is a follow-up once the
+        //   extension <-> bridge base64 file channel is wired end-to-end.
         this.logInfo('Saving PNG...');
         try {
           // Generate filename
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          const filename = `${name.replace(/[^a-z0-9_-]/gi, '_') || 'screenshot'}_${timestamp}.png`;
+          const filename = args.savePath
+            ? args.savePath
+            : `${name.replace(/[^a-z0-9_-]/gi, '_') || 'screenshot'}_${timestamp}.png`;
 
           // Use Chrome's download API to save the file
           const downloadId = await chrome.downloads.download({
@@ -383,6 +412,69 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
       ],
       isError: false,
     };
+  }
+
+  /**
+   * Save screenshot base64 to an absolute filesystem path via the native messaging host.
+   *
+   * Protocol chain (per AGENTS.md §0b.7.7):
+   *   this method → chrome.runtime.sendMessage('forward_to_native')
+   *     → background listener (native-host.ts) → nativePort.postMessage('file_operation')
+   *       → native-server (file-handler.ts: saveBase64File with filePath arg)
+   *         → fs.writeFileSync(tmp) + fs.renameSync(tmp, filePath)  // atomic write-rename
+   *
+   * Returns {filePath, size} on success, or null on timeout/connection failure.
+   * 30s timeout matches file-upload.ts convention.
+   */
+  private _saveViaNativeHost(
+    base64Data: string,
+    savePath: string,
+  ): Promise<{ filePath: string; size: number } | null> {
+    return new Promise((resolve) => {
+      const requestId = `screenshot-save-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const timeout = setTimeout(() => {
+        console.error(`[screenshot-save] Native host save request timed out (30s): savePath=${savePath}`);
+        chrome.runtime.onMessage.removeListener(handleMessage);
+        resolve(null);
+      }, 30000);
+
+      const handleMessage = (message: any) => {
+        if (
+          message.type === 'file_operation_response' &&
+          message.responseToRequestId === requestId
+        ) {
+          clearTimeout(timeout);
+          chrome.runtime.onMessage.removeListener(handleMessage);
+          if (message.payload?.success && message.payload?.filePath) {
+            resolve({
+              filePath: message.payload.filePath,
+              size: message.payload.size ?? 0,
+            });
+          } else {
+            console.error(
+              `[screenshot-save] Native host returned failure:`,
+              message.payload?.error ?? 'unknown error',
+            );
+            resolve(null);
+          }
+        }
+      };
+
+      chrome.runtime.onMessage.addListener(handleMessage);
+
+      chrome.runtime.sendMessage({
+        type: 'forward_to_native',
+        message: {
+          type: 'file_operation',
+          requestId,
+          payload: {
+            action: 'prepareFile',
+            base64Data,
+            filePath: savePath,
+          },
+        },
+      });
+    });
   }
 
   /**
