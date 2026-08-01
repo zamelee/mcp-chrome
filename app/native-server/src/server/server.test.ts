@@ -1,6 +1,7 @@
 import { describe, expect, test, afterAll, beforeAll } from '@jest/globals';
 import supertest from 'supertest';
 import Server from './index';
+import { getLatestExtensionConnection } from '../control-state';
 
 describe('服务器测试', () => {
   // 启动服务器测试实例
@@ -122,13 +123,10 @@ describe('Plan 1.3 - bridge 控制面 /internal/* endpoints', () => {
       .send({ extensionId: 'test-ext-plan13-latest-B', version: '1.0', liveTargets: [] })
       .expect(200);
 
-    // Hit the public method on the singleton via a private cast.
-    const latest = (
-      Server as unknown as {
-        getLatestExtensionConnection?: () => { extensionId: string } | null;
-      }
-    ).getLatestExtensionConnection?.();
-    expect(latest).not.toBeNull();
+    // Control-state lives in its own module so both server routes and
+    // mcp/register-tools.ts can read the same view without import cycles.
+    const latest = getLatestExtensionConnection();
+    expect(latest).toBeDefined();
     expect(latest?.extensionId).toBe('test-ext-plan13-latest-B');
   });
 

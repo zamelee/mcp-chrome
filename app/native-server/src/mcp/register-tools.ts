@@ -8,6 +8,8 @@ import nativeMessagingHostInstance from '../native-messaging-host';
 import { NativeMessageType, TOOL_SCHEMAS } from '@ethanwilkins/chrome-mcp-shared-2026';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
+import { SessionExpiredError, TabGoneError, safetyLevelFor, SafetyLevel } from '../tool-safety';
+import { getLatestExtensionConnection } from '../control-state';
 
 interface ToolActivity {
   requestId: string;
@@ -150,11 +152,100 @@ async function resolveWriteTab(args: any, signal?: AbortSignal): Promise<any> {
   return { ...args, tabId };
 }
 
+/**
+ * Plan 1.4: tool preflight. Cheap sync checks before we spend a round-trip
+ * to the extension. Returns a CallToolResult-with-isError if the call should
+ * be refused, or null if the call may proceed.
+ *
+ * Exported with an `@internal` tag for unit testing only; production code
+ * always goes through handleToolCall -> runPreflight.
+ *
+ * Decision tree (matches TOOL_SAFETY in tool-safety.ts):
+ *   Safe       → no preflight (pure browser/profile; reload does not affect)
+ *   TabBound   → assertRuntime; cheap tab probe is async + lives in the
+ *                extension, so defer it to the native-messaging hop (its
+ *                error already surfaces as `tab gone` naturally)
+ *   CdpBound   → assertRuntime + assertTarget if args.targetId provided
+ *
+ * All preflight failures are surfaced as MCP semantic errors
+ * ({code: "SESSION_EXPIRED" | "TAB_GONE"}) so newer clients can switch on
+ * `code` and skip retries; older clients still see a useful message string.
+ */
+/**
+ * @internal exported solely so unit tests can drive the decision tree without
+ * spinning up a full MCP server. Production code reaches it indirectly via
+ * handleToolCall.
+ */
+export function runPreflight(
+  name: string,
+  args: any,
+): { isError: true; content: Array<{ type: 'text'; text: string }> } | null {
+  const conn = getLatestExtensionConnection();
+  const level = safetyLevelFor(name);
+
+  // Safe tools do not depend on extension state at all.
+  if (level === SafetyLevel.Safe) return null;
+
+  // TabBound + CdpBound both need a live extension heartbeat.
+  if (!conn) {
+    return errorResult(name, 'SESSION_EXPIRED', 'extension has not registered since bridge start');
+  }
+  const heartbeatStaleMs = 5_000;
+  if (Date.now() - conn.lastHeartbeat > heartbeatStaleMs) {
+    return errorResult(
+      name,
+      'SESSION_EXPIRED',
+      `last heartbeat ${Math.round((Date.now() - conn.lastHeartbeat) / 1000)}s ago`,
+    );
+  }
+
+  // CdpBound additionally checks the live target set when the tool passes a targetId.
+  if (level === SafetyLevel.CdpBound) {
+    const targetId = typeof args?.targetId === 'string' ? args.targetId : undefined;
+    if (targetId && !conn.liveTargets.has(targetId)) {
+      return errorResult(
+        name,
+        'SESSION_EXPIRED',
+        `CDP target ${targetId} not in live set (extension reloaded?)`,
+      );
+    }
+  }
+
+  return null;
+}
+
+function errorResult(
+  toolName: string,
+  code: 'SESSION_EXPIRED' | 'TAB_GONE',
+  message: string,
+): { isError: true; content: Array<{ type: 'text'; text: string }> } {
+  const payload = {
+    code,
+    recoverable: true,
+    toolName,
+    message:
+      `Session expired for tool "${toolName}": ${message}. ` +
+      `The Chrome extension was reloaded; re-initialize MCP session.`,
+  };
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+  };
+}
+
 const handleToolCall = async (
   name: string,
   args: any,
   signal?: AbortSignal,
 ): Promise<CallToolResult> => {
+  // Plan 1.4: preflight - refuse the call with a structured SESSION_EXPIRED
+  // error if the extension has not been heard from recently. This stops the
+  // previous silent-corruption failure mode where a stale MCP session id kept
+  // sending CDP requests at a dead extension after `chrome://extensions`
+  // reloaded the extension.
+  const preflight = runPreflight(name, args);
+  if (preflight) return preflight;
+
   const activity: ToolActivity = {
     requestId: randomUUID(),
     name,

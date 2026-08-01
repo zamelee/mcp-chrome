@@ -44,6 +44,7 @@ import {
   safetyLevelFor,
   SafetyLevel,
 } from '../tool-safety';
+import { recordExtensionConnection, getExtensionConnection } from '../control-state';
 
 // ============================================================
 // Types
@@ -53,18 +54,6 @@ interface ExtensionRequestPayload {
   data?: unknown;
 }
 
-/**
- * Plan 1.3: per-extension connection state tracked by the bridge.
- * `lastHeartbeat` is updated by the extension's keepalive ping.
- * `liveTargets` is the live CDP target set; refresh on each heartbeat.
- */
-export interface ExtensionConnection {
-  extensionId: string;
-  version: string;
-  connectedAt: number;
-  lastHeartbeat: number;
-  liveTargets: Set<string>;
-}
 type McpTransport = StreamableHTTPServerTransport | SSEServerTransport;
 interface McpSession {
   transport: McpTransport;
@@ -87,7 +76,6 @@ export class Server {
   private startedAt = Date.now();
   // Plan 1.1 + 2.x: bridge identity + extension heartbeat tracking
   private bridgeInstanceId: string = randomUUID();
-  private extensionConnections = new Map<string, ExtensionConnection>();
   private reclaimedSessions = 0;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private agentStreamManager: AgentStreamManager;
@@ -471,7 +459,7 @@ export class Server {
         return;
       }
 
-      const conn = this.recordExtensionConnection(extensionId, {
+      const conn = recordExtensionConnection(extensionId, {
         version,
         liveTargets,
         markHeartbeat: true,
@@ -507,7 +495,7 @@ export class Server {
         return;
       }
 
-      const existing = this.extensionConnections.get(extensionId);
+      const existing = getExtensionConnection(extensionId);
       if (!existing) {
         // Heartbeat arrived before the extension ever called /internal/register.
         // Tell it to re-register so we can attach a fresh heartbeat window.
@@ -519,7 +507,7 @@ export class Server {
         return;
       }
 
-      const conn = this.recordExtensionConnection(extensionId, {
+      const conn = recordExtensionConnection(extensionId, {
         version: existing.version,
         liveTargets,
         markHeartbeat: true,
@@ -531,45 +519,6 @@ export class Server {
         liveTargetCount: conn.liveTargets.size,
       });
     });
-  }
-
-  /**
-   * Upsert an ExtensionConnection entry. Used by both /internal/register and
-   * /internal/heartbeat so they share one shape of state mutation. Existing
-   * connections preserve `connectedAt`; only `lastHeartbeat` and `liveTargets`
-   * are refreshed on a heartbeat. `version` is refreshed on register.
-   */
-  private recordExtensionConnection(
-    extensionId: string,
-    opts: { version?: string; liveTargets: string[]; markHeartbeat: boolean },
-  ): ExtensionConnection {
-    const now = Date.now();
-    const existing = this.extensionConnections.get(extensionId);
-    const conn: ExtensionConnection = {
-      extensionId,
-      version: opts.version ?? existing?.version ?? 'unknown',
-      connectedAt: existing?.connectedAt ?? now,
-      lastHeartbeat: opts.markHeartbeat ? now : (existing?.lastHeartbeat ?? now),
-      liveTargets: new Set(opts.liveTargets),
-    };
-    this.extensionConnections.set(extensionId, conn);
-    return conn;
-  }
-
-  /**
-   * Public helper for Plan 1.4 (tool preflight). Returns the freshest
-   * ExtensionConnection by `lastHeartbeat`, or null if no extension has
-   * registered yet. We snapshot the Set so callers can iterate without
-   * worrying about concurrent mutation by a heartbeat.
-   */
-  public getLatestExtensionConnection(): ExtensionConnection | null {
-    let latest: ExtensionConnection | null = null;
-    for (const conn of this.extensionConnections.values()) {
-      if (!latest || conn.lastHeartbeat > latest.lastHeartbeat) {
-        latest = conn;
-      }
-    }
-    return latest;
   }
 
   /**
