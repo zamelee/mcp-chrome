@@ -51,7 +51,7 @@ interface McpSession {
   activeRequests: number;
   lastError: string | null;
 }
-const SESSION_TTL_MS = 10 * 60_000;
+const SESSION_TTL_MS = 24 * 60 * 60_000;  // 24h, idle session reclaimed; clients can re-init seamlessly (initialize accepted with stale sid)
 
 // ============================================================
 // Server Class
@@ -63,6 +63,9 @@ export class Server {
   private nativeHost: NativeMessagingHost | null = null;
   private transportsMap = new Map<string, McpSession>();
   private startedAt = Date.now();
+  // Plan 1.1 + 2.x: bridge identity + extension heartbeat tracking
+  private bridgeInstanceId: string = randomUUID();
+  private extensionConnections = new Map<string, ExtensionConnection>();
   private reclaimedSessions = 0;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private agentStreamManager: AgentStreamManager;
@@ -301,7 +304,9 @@ export class Server {
 
       if (transport) {
         // Transport found, proceed
-      } else if (!sessionId && isInitializeRequest(request.body)) {
+      } else if (isInitializeRequest(request.body)) {
+        // Accept initialize even when sessionId is stale or missing — lets clients
+        // recover from a TTL-driven reclaim without manual coordination.
         const newSessionId = randomUUID();
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => newSessionId,
@@ -405,6 +410,10 @@ export class Server {
   // ============================================================
 
   public async start(port = NATIVE_SERVER_PORT, nativeHost: NativeMessagingHost): Promise<void> {
+    // Plan 1.1: re-roll bridge epoch per process start. Clients use this to detect
+    // that the bridge was restarted (e.g. after extension reload).
+    this.bridgeInstanceId = randomUUID();
+    console.log(`[bridge] new epoch: ${this.bridgeInstanceId}`);
     if (!this.nativeHost) {
       this.nativeHost = nativeHost;
     } else if (this.nativeHost !== nativeHost) {
