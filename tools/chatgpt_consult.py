@@ -100,9 +100,9 @@ def consult(args):
             "mcp-chrome", url, topic,
             notes="Captured by tools/chatgpt_consult.py on " + time.strftime("%Y-%m-%d"),
         )
-    print("done. URL: " + url)
-    print("reply: " + str(len(text)) + " chars")
-    print("handoff: " + handoff)
+    print("done. URL: " + url, flush=True)
+    print("reply: " + str(len(text)) + " chars", flush=True)
+    print("handoff: " + handoff, flush=True)
 
 
 def capture(args):
@@ -121,7 +121,7 @@ def capture(args):
             args.topic if args.topic else ("chatgpt-" + url.rsplit(chr(47), 1)[-1][:8]),
             notes="Captured by tools/chatgpt_consult.py --capture on " + time.strftime("%Y-%m-%d"),
         )
-    print("captured: " + str(len(text)) + " chars -> " + handoff)
+    print("captured: " + str(len(text)) + " chars -> " + handoff, flush=True)
 
 
 def main():
