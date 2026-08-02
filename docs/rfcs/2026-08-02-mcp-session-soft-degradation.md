@@ -415,29 +415,56 @@ export async function handleToolCall(...): Promise<CallToolResult> {
 
 #### 6.1.4 跟踪 ownerId 变化（触发 reloadContext）
 
+> **实现说明**：RFC 草稿用 `class ReloadContextTracker`。Phase 1b 落地时改为
+> module-level 函数（`observeHeartbeat` / `getReloadContext` / `_resetReloadContextForTests`），
+> 与 `control-state.ts`（同模块已存在的 state 跟踪器）保持一致。状态仍是
+> module-singleton；测试通过 `_resetReloadContextForTests` 清理。
+
 ```typescript
-// app/native-server/src/server/bridge-control.ts (类似改造)
-class ReloadContextTracker {
-  private lastOwnerId: string | null = null;
-  private lastOwnerChangeMs = 0;
+// app/native-server/src/mcp/reload-context.ts
+let lastOwnerId: string | null = null;
+let lastOwnerChangeMs = 0;
 
-  observeHeartbeat(ownerId: string) {
-    if (ownerId !== this.lastOwnerId) {
-      this.lastOwnerId = ownerId;
-      this.lastOwnerChangeMs = Date.now();
-      // 注：本 RFC (D) 不集成方向 C（bridge 主动 close SSE）。
-      // 方向 C 是单独的 future-work，依赖 Codex 升级响应 SSE close。
-    }
+export function observeHeartbeat(ownerId: string, nowMs: number = Date.now()): void {
+  if (lastOwnerId === null) {
+    // First observation — initialize. NOT a reload.
+    lastOwnerId = ownerId;
+    return;
   }
+  if (ownerId === lastOwnerId) {
+    return; // Same owner — normal heartbeat.
+  }
+  // Owner changed — reload detected.
+  lastOwnerId = ownerId;
+  lastOwnerChangeMs = nowMs;
+}
 
-  getReloadContext(): ReloadContext {
-    return {
-      lastOwnerChangeMs: this.lastOwnerChangeMs,
-      timeSinceOwnerChange: Date.now() - this.lastOwnerChangeMs,
-    };
-  }
+export function getReloadContext(): ReloadContext {
+  return { lastOwnerId, lastOwnerChangeMs };
+}
+
+export function _resetReloadContextForTests(): void {
+  lastOwnerId = null;
+  lastOwnerChangeMs = 0;
 }
 ```
+
+**与 RFC §5.1 / §5.2 语义对齐**：
+
+- 第一次 `observeHeartbeat`（`lastOwnerId === null`）→ 设 `lastOwnerId = ownerId`，但
+  `lastOwnerChangeMs` 保持 0。`buildSessionMeta` 把这解读为 "no reload detected"
+  → STALE_RECOVERED 路径（如果 heartbeat stale）或 NORMAL（如果 heartbeat 新鲜）。
+- 后续同 owner → no-op（普通 heartbeat 60s 一次）。
+- 后续不同 owner → reload detected，`lastOwnerChangeMs` 更新。
+
+**集成点（Phase 3）**：`app/native-server/src/server/index.ts` 的
+`POST /internal/heartbeat` 处理器在调用 `recordExtensionConnection` 之后调
+`observeHeartbeat(body.ownerId)`（需要先扩展 heartbeat body 接受 `ownerId` 字段）。
+
+**集成点（Phase 2）**：`runPreflight` 调 `getReloadContext()` + `buildSessionMeta(conn, ctx)`
+实现四态判定。
+
+````
 
 ### 6.2 AGENTS.md 改动
 
@@ -476,7 +503,7 @@ class ReloadContextTracker {
 | Codex 拿到硬错误                        | 必须重启 Codex          | `EXTENSION_STARTING` 等 sleep 后重试；`SESSION_NOT_FOUND` 必须 reload extension |
 
 > 注意 `SESSION_EXPIRED` 在 v1.8 仍保留为 `SESSION_NOT_FOUND` 的 deprecated alias，下一个 major 版本移除。
-```
+````
 
 #### 6.2.2 §0b.7.8.1 改 SESSION_EXPIRED 处置
 
