@@ -38,6 +38,20 @@ export const TIMEOUTS = {
  */
 export const HEARTBEAT_STALE_MS = 90_000;
 
+/**
+ * Extension heartbeat interval (mirror of the extension-side constant
+ * in `app/chrome-extension/entrypoints/background/bridge-control.ts`).
+ *
+ * Used by bridge-side session-meta.ts to compute retry timing:
+ * `retryAfterMs = max(1000, HEARTBEAT_INTERVAL_MS - reloadGapMs + 2_000)`.
+ *
+ * MUST stay in sync with the extension. Drift will cause bridge to under-
+ * or over-estimate how long a client should wait before retrying an
+ * EXTENSION_STARTING call. If the extension changes its interval, update
+ * this constant in the same release.
+ */
+export const HEARTBEAT_INTERVAL_MS = 60_000;
+
 // Server configuration
 export const SERVER_CONFIG = {
   HOST: '127.0.0.1',
