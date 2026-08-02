@@ -442,28 +442,34 @@ const handleToolCall = async (
     } else {
       activity.outcome = 'error';
       activity.error = response.error;
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error calling tool: ${response.error}`,
-          },
-        ],
-        isError: true,
-      };
+      return attachDegradedMeta(
+        {
+          content: [
+            {
+              type: 'text',
+              text: `Error calling tool: ${response.error}`,
+            },
+          ],
+          isError: true,
+        },
+        degradedMeta,
+      );
     }
   } catch (error: any) {
     activity.outcome = error.message === 'Request cancelled' ? 'cancelled' : 'error';
     activity.error = error.message;
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Error calling tool: ${error.message}`,
-        },
-      ],
-      isError: true,
-    };
+    return attachDegradedMeta(
+      {
+        content: [
+          {
+            type: 'text',
+            text: `Error calling tool: ${error.message}`,
+          },
+        ],
+        isError: true,
+      },
+      degradedMeta,
+    );
   } finally {
     activity.elapsedMs = Date.now() - new Date(activity.startedAt).getTime();
   }
