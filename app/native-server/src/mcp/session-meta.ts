@@ -17,26 +17,15 @@
  */
 
 import { HEARTBEAT_INTERVAL_MS, HEARTBEAT_STALE_MS } from '../constant';
+import type { ExtensionConnection } from '../control-state';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-/**
- * Bridge-side view of a single extension connection.
- *
- * This is a structural subset of `ExtensionConnection` in `control-state.ts`
- * — only the fields we need for session-meta computation. Defining it here
- * keeps session-meta.ts self-contained for unit testing (no import cycle
- * with control-state).
- */
-export interface ExtensionConnection {
-  extensionId: string;
-  version: string;
-  connectedAt: number;
-  lastHeartbeat: number;
-  liveTargets: Set<string>;
-}
+// Re-export ExtensionConnection so callers of buildSessionMeta can import
+// the type from session-meta.ts without needing to know about control-state.ts.
+export type { ExtensionConnection };
 
 /**
  * Reload detection state, owned by `ReloadContextTracker` (Phase 1b).
@@ -63,8 +52,11 @@ export interface McpSessionMeta {
    *   'normal' | 'stale_recovered' | 'extension_starting'
    *
    * SESSION_NOT_FOUND is intentionally NOT a status here — it's a caller-
-   * level decision when `conn` is null or `lastHeartbeat === 0`. See
-   * `runPreflight` in `register-tools.ts` §6.1.2 of the RFC.
+   * level decision when `conn` itself is null/undefined (no extension
+   * has ever registered via `/internal/register`). Per `control-state.ts`,
+   * `conn.lastHeartbeat === 0` is impossible because
+   * `recordExtensionConnection` always sets `lastHeartbeat = nowMs` on
+   * registration. See `runPreflight` in `register-tools.ts` §6.1.2 of the RFC.
    */
   sessionStatus: 'normal' | 'stale_recovered' | 'extension_starting';
 
@@ -108,8 +100,12 @@ export interface McpSessionMeta {
  * SESSION_NOT_FOUND is handled by the caller (runPreflight) before this
  * function is invoked.
  *
- * @param conn           current extension connection (must have lastHeartbeat > 0)
- * @param reloadContext  ownerId tracking state
+ * @param conn           current extension connection from control-state.ts.
+ *                          Caller must guarantee this is defined (i.e., an
+ *                          extension has registered). For the
+ *                          SESSION_NOT_FOUND case, caller does not invoke
+ *                          this function.
+ * @param reloadContext  ownerId tracking state (owned by ReloadContextTracker in Phase 1b)
  * @param nowMs          reference timestamp for deterministic tests
  */
 export function buildSessionMeta(
@@ -192,11 +188,14 @@ export function computeRetryAfterMs(reloadGapMs: number): number {
  *     (reload itself is the latest signal we have for "extension started")
  *   - Post-reload heartbeat: conn.lastHeartbeat >= reloadMs → use that
  *     (the new heartbeat carried the fresh liveTargets)
+ *
+ * No `nowMs` parameter: the formula is self-contained with the two
+ * timestamps. `nowMs` would only be needed for the impossible edge case
+ * where neither timestamp has been recorded (handled by the early return).
  */
 export function computeLiveTargetsSyncLag(
   conn: ExtensionConnection,
   reloadContext: ReloadContext,
-  nowMs: number,
 ): number {
   if (reloadContext.lastOwnerChangeMs === 0) return 0;
   const lastSyncMs = Math.max(conn.lastHeartbeat, reloadContext.lastOwnerChangeMs);

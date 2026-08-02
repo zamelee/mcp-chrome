@@ -216,7 +216,7 @@ describe('computeLiveTargetsSyncLag', () => {
   test('no reload ever observed → 0', () => {
     const conn = mockConn(100_000);
     const ctx = mockReload(null);
-    expect(computeLiveTargetsSyncLag(conn, ctx, NOW)).toBe(0);
+    expect(computeLiveTargetsSyncLag(conn, ctx)).toBe(0);
   });
 
   test('reload 100s ago, heartbeat arrived 50s ago (post-reload) → lag = 50s', () => {
@@ -232,7 +232,7 @@ describe('computeLiveTargetsSyncLag', () => {
     };
     // newHeartbeatMs = max(heartbeatMs, reloadMs) = heartbeatMs
     // lag = heartbeatMs - reloadMs = 50000
-    expect(computeLiveTargetsSyncLag(conn, ctx, NOW)).toBe(50_000);
+    expect(computeLiveTargetsSyncLag(conn, ctx)).toBe(50_000);
   });
 
   test('reload 5s ago, heartbeat still pre-reload (100s ago) → lag = 0', () => {
@@ -241,7 +241,7 @@ describe('computeLiveTargetsSyncLag', () => {
     // lag = reloadMs - reloadMs = 0
     const conn = mockConn(100_000);
     const ctx = mockReload(5_000);
-    expect(computeLiveTargetsSyncLag(conn, ctx, NOW)).toBe(0);
+    expect(computeLiveTargetsSyncLag(conn, ctx)).toBe(0);
   });
 
   test('reload 100s ago, heartbeat arrived immediately after reload → lag = 0', () => {
@@ -256,7 +256,7 @@ describe('computeLiveTargetsSyncLag', () => {
       lastOwnerId: 'new-owner',
       lastOwnerChangeMs: reloadMs,
     };
-    expect(computeLiveTargetsSyncLag(conn, ctx, NOW)).toBe(0);
+    expect(computeLiveTargetsSyncLag(conn, ctx)).toBe(0);
   });
 
   test('handles clock skew (conn.lastHeartbeat in future relative to reloadMs) gracefully', () => {
@@ -273,13 +273,62 @@ describe('computeLiveTargetsSyncLag', () => {
       lastOwnerChangeMs: reloadMs,
     };
     // heartbeatMs - reloadMs = 101000, but floor at 0 if negative — not negative here
-    expect(computeLiveTargetsSyncLag(conn, ctx, NOW)).toBe(101_000);
+    expect(computeLiveTargetsSyncLag(conn, ctx)).toBe(101_000);
+  });
+});
+
+// ============================================================================
+// Response shape (locks down exact field set per status)
+// ============================================================================
+
+describe('buildSessionMeta - exact field set per status', () => {
+  test('NORMAL returns only { sessionStatus }', () => {
+    const conn = mockConn(10_000);
+    const ctx = mockReload(5_000);
+    const meta = buildSessionMeta(conn, ctx, NOW);
+    expect(Object.keys(meta).sort()).toEqual(['sessionStatus']);
+  });
+
+  test('EXTENSION_STARTING returns sessionStatus + retryAfterMs + heartbeatGapMs + reloadGapMs', () => {
+    const conn = mockConn(100_000);
+    const ctx = mockReload(30_000);
+    const meta = buildSessionMeta(conn, ctx, NOW);
+    expect(Object.keys(meta).sort()).toEqual([
+      'heartbeatGapMs',
+      'reloadGapMs',
+      'retryAfterMs',
+      'sessionStatus',
+    ]);
+  });
+
+  test('STALE_RECOVERED returns sessionStatus + heartbeatGapMs + liveTargetsSyncLagMs + recommendation', () => {
+    const conn = mockConn(100_000);
+    const ctx = mockReload(100_000);
+    const meta = buildSessionMeta(conn, ctx, NOW);
+    expect(Object.keys(meta).sort()).toEqual([
+      'heartbeatGapMs',
+      'liveTargetsSyncLagMs',
+      'recommendation',
+      'sessionStatus',
+    ]);
+  });
+
+  test('STALE_RECOVERED without reload (lastOwnerChangeMs=0) does NOT include reloadGapMs', () => {
+    const conn = mockConn(100_000);
+    const ctx = mockReload(null);
+    const meta = buildSessionMeta(conn, ctx, NOW);
+    expect(Object.keys(meta).sort()).toEqual([
+      'heartbeatGapMs',
+      'liveTargetsSyncLagMs',
+      'recommendation',
+      'sessionStatus',
+    ]);
   });
 });
 
 // ============================================================================
 // Determinism / pure-function guarantees
-// ============================================================================
+// ==========================================================================
 
 describe('pure-function guarantees', () => {
   test('buildSessionMeta with same inputs returns same outputs (idempotent)', () => {
