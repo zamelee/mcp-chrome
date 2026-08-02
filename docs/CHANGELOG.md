@@ -23,6 +23,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **tab-not-in-live-set SESSION_EXPIRED race condition (60s window after tab create/remove/move)** - Plan 1.4 preflight checks `conn.liveTargets.has(tabId)` to refuse calls on tabs the extension has not heartbeat-reported yet. Heartbeat runs every 60s (`HEARTBEAT_INTERVAL_MS`), so any tab opened via a bridge tool was invisible to preflight for up to 60s after creation. Trigger: bridge opens a tab via `chrome_network_capture` (or any new tab call), then user immediately calls `chrome_switch_tab` / `chrome_extract` / etc on that tab -> SESSION_EXPIRED with message `Tab N not in live set (extension reloaded?)`. Fix in `app/chrome-extension/entrypoints/background/bridge-control.ts`: register `chrome.tabs.onCreated / onRemoved / onAttached / onDetached / onReplaced` listeners at module load, each triggering an immediate `doHeartbeat()` (gated by `state.timer != null` so the call is a no-op before `onBridgeStarted` kicks off the heartbeat loop). Bridge now sees the new tabId within one round-trip (< 100ms) instead of up to 60s. MV3 SW lifecycle note documented in the code comment: events that fire while the SW is asleep are dropped (not queued), but the next SW wakeup re-attaches listeners at module load and the initial heartbeat captures the current tab set, so the SW-asleep case is also handled correctly. No bridge (native-server) change needed - the heartbeat payload schema was already correct, only the extension's send frequency was the gap.
 
+## [v1.8.1] - 2026-08-02
+
+### Added
+
+- **MCP session soft-degradation protocol (RFC `docs/rfcs/2026-08-02-mcp-session-soft-degradation.md`)** - replaces hard `SESSION_EXPIRED` rejection with four-state judgment (NORMAL / STALE_RECOVERED / EXTENSION_STARTING / SESSION_NOT_FOUND). After extension reload, write-class tools now either get a degraded result with `_meta.sessionStatus="stale_recovered"` (retry-friendly, no client upgrade required) or a retryable `EXTENSION_STARTING` error with `retryAfterMs` hint (sleep then retry). Design follows the "bank/频率 hopping radio" analogy: server internal state changes should not hard-reject clients using the old contract; accept with downgrade and notify about the new contract.
+  - bridge: `app/native-server/src/mcp/session-meta.ts` — pure-function `buildSessionMeta(conn, reloadContext, nowMs)` computing the four-state judgment. Threshold math anchored on existing `HEARTBEAT_STALE_MS` (90s) and `HEARTBEAT_INTERVAL_MS` (60s) constants; no new magic numbers.
+  - bridge: `app/native-server/src/mcp/reload-context.ts` — module-level `observeHeartbeat(ownerId)` + `getReloadContext()` + `_resetReloadContextForTests()`. Tracks per-SW-lifecycle ownerId to detect reloads.
+  - bridge: `app/native-server/src/mcp/register-tools.ts` — `runPreflight` now returns `PreflightResult = { isError, content } | { degraded, meta } | null`. New helper `attachDegradedMeta` merges `_meta` into both success and error result branches (so the degraded signal survives tool call failures too). `errorResult` union extended with `SESSION_NOT_FOUND` and `EXTENSION_STARTING` codes.
+  - wire protocol: heartbeat body schema accepts optional `ownerId` field. Bridge `/internal/heartbeat` handler invokes `observeHeartbeat(ownerId)`. Backward compatible: old extensions without ownerId field still work (treated as "no reload signal", STALE_RECOVERED path with Infinity reloadGap).
+  - extension: `app/chrome-extension/entrypoints/background/bridge-control.ts` — `doRegister()` and `doHeartbeat()` include `ownerId` in POST body, sourced from `getV3Runtime().ownerId` (already exported from `bootstrap.ts`).
+
+### Changed
+
+- `SESSION_EXPIRED` deprecated for "no extension registered" case. New preferred code is `SESSION_NOT_FOUND`. `SESSION_EXPIRED` retained as deprecated alias for one major version. Also preserved for the "tab/target not in live set" client error (unchanged behavior).
+- `AGENTS.md §0b.7.8.1` agent-handling rules updated to recommend `EXTENSION_STARTING` retry-with-retryAfterMs and `STALE_RECOVERED` accept-with-meta, before falling back to legacy `SESSION_EXPIRED` reload-Codex instructions.
+- Tests: 107/107 native-server (was 55 pre-Phase-1a; +52 from session-meta + reload-context + register-tools updates + 4 RFC §7.2 integration scenarios). 491/491 chrome-extension (unchanged from v1.7.4).
+
+### Notes
+
+- Direction C (bridge actively closes SSE on reload) NOT included in this release. D (soft degradation) does not depend on Codex client behavior and works regardless; C is future-work tracked separately.
+- Wire protocol change is backward compatible: heartbeat body adds optional `ownerId`. Old extensions (no ownerId) continue to work; new extensions (with ownerId) get proper reload detection.
+
 ## [v1.8.0] - 2026-08-01
 
 ### Added
