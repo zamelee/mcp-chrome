@@ -18,6 +18,10 @@ const REGISTER_PATH = '/internal/register';
 const HEARTBEAT_PATH = '/internal/heartbeat';
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
+// v1.8+ soft degradation (RFC §6.1.4): include ownerId in heartbeat body
+// so bridge can detect SW reload events.
+import { getV3Runtime } from './record-replay-v3/bootstrap';
+
 type BridgeHealth = {
   bridgeInstanceId: string;
   serverStartedAt: number;
@@ -83,6 +87,7 @@ async function doRegister(): Promise<BridgeHealth | null> {
     extensionId: state.extensionId,
     version: state.version,
     liveTargets,
+    ownerId: getV3Runtime()?.ownerId ?? null,
   });
   if (ack) {
     console.log(
@@ -99,6 +104,7 @@ async function doHeartbeat(): Promise<void> {
   const ack = await postJson(HEARTBEAT_PATH, {
     extensionId: state.extensionId,
     liveTargets,
+    ownerId: getV3Runtime()?.ownerId ?? null,
   });
   if (ack) {
     console.debug(

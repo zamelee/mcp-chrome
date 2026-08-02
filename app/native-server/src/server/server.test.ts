@@ -183,4 +183,83 @@ describe('Plan 1.3 - bridge 控制面 /internal/* endpoints', () => {
     expect(payload.toolName).toBe('chrome_screenshot');
     expect(typeof payload.bridgeInstanceId).toBe('string');
   });
+
+  // v1.8+ soft degradation (RFC §6.1.4): heartbeat with ownerId
+  test('POST /internal/heartbeat 接受 ownerId 并调用 ReloadContextTracker', async () => {
+    // First heartbeat with owner-A
+    await supertest(Server.getInstance().server)
+      .post('/internal/register')
+      .send({
+        extensionId: 'test-ext-ownerid',
+        version: '1.0.0',
+        liveTargets: ['1'],
+        ownerId: 'owner-A',
+      })
+      .expect(200);
+    // Second heartbeat with same ownerId (no reload)
+    const hb1 = await supertest(Server.getInstance().server)
+      .post('/internal/heartbeat')
+      .send({ extensionId: 'test-ext-ownerid', liveTargets: ['1'], ownerId: 'owner-A' })
+      .expect(200);
+    expect(hb1.body.success).toBe(true);
+
+    // Verify getReloadContext sees owner-A, lastOwnerChangeMs === 0 (no reload yet)
+    const ctx1 = getReloadContext();
+    expect(ctx1.lastOwnerId).toBe('owner-A');
+    expect(ctx1.lastOwnerChangeMs).toBe(0);
+  });
+
+  test('POST /internal/heartbeat ownerId 变化触发 reload 检测', async () => {
+    await supertest(Server.getInstance().server)
+      .post('/internal/register')
+      .send({
+        extensionId: 'test-ext-ownerid-2',
+        version: '1.0.0',
+        liveTargets: ['1'],
+        ownerId: 'owner-A',
+      })
+      .expect(200);
+
+    // Same owner → no reload detected
+    await supertest(Server.getInstance().server)
+      .post('/internal/heartbeat')
+      .send({ extensionId: 'test-ext-ownerid-2', liveTargets: ['1'], ownerId: 'owner-A' })
+      .expect(200);
+    expect(getReloadContext().lastOwnerChangeMs).toBe(0);
+
+    // Different owner → reload detected
+    await supertest(Server.getInstance().server)
+      .post('/internal/heartbeat')
+      .send({ extensionId: 'test-ext-ownerid-2', liveTargets: ['1'], ownerId: 'owner-B' })
+      .expect(200);
+    const ctx = getReloadContext();
+    expect(ctx.lastOwnerId).toBe('owner-B');
+    expect(ctx.lastOwnerChangeMs).toBeGreaterThan(0);
+  });
+
+  test('POST /internal/heartbeat 不带 ownerId 是兼容的（backward compat）', async () => {
+    // Reset reload context for clean test (earlier tests may have set ownerId)
+    require('../mcp/reload-context')._resetReloadContextForTests();
+
+    // Old extension without ownerId field should not break
+    await supertest(Server.getInstance().server)
+      .post('/internal/register')
+      .send({ extensionId: 'test-ext-no-ownerid', version: '1.0.0', liveTargets: ['1'] })
+      .expect(200);
+    const hb = await supertest(Server.getInstance().server)
+      .post('/internal/heartbeat')
+      .send({ extensionId: 'test-ext-no-ownerid', liveTargets: ['1'] })
+      .expect(200);
+    expect(hb.body.success).toBe(true);
+    // ReloadContext should still be empty (no ownerId signal received)
+    const ctx = getReloadContext();
+    expect(ctx.lastOwnerId).toBeNull();
+    expect(ctx.lastOwnerChangeMs).toBe(0);
+  });
 });
+
+function getReloadContext(): { lastOwnerId: string | null; lastOwnerChangeMs: number } {
+  // Helper to access module-singleton state for test verification
+  // Note: actual access via direct import in production
+  return require('../mcp/reload-context').getReloadContext();
+}

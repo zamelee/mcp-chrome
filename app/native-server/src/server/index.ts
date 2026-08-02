@@ -49,6 +49,7 @@ import {
   getExtensionConnection,
   getLatestExtensionConnection,
 } from '../control-state';
+import { observeHeartbeat } from '../mcp/reload-context';
 
 // ============================================================
 // Types
@@ -524,6 +525,7 @@ export class Server {
     type HeartbeatBody = {
       extensionId?: unknown;
       liveTargets?: unknown;
+      ownerId?: unknown; // v1.8+ soft degradation (RFC §6.1.4)
     };
 
     this.fastify.post('/internal/heartbeat', async (request, reply) => {
@@ -532,6 +534,10 @@ export class Server {
       const liveTargets = Array.isArray(body.liveTargets)
         ? body.liveTargets.filter((t): t is string => typeof t === 'string')
         : [];
+      // v1.8+ soft degradation (RFC §6.1.4): track ownerId changes.
+      // ownerId is generated per SW lifecycle; bridge uses changes to
+      // detect reloads for STALE_RECOVERED vs EXTENSION_STARTING judgment.
+      const ownerId = typeof body.ownerId === 'string' ? body.ownerId : null;
 
       if (!extensionId) {
         reply.code(HTTP_STATUS.BAD_REQUEST).send({
@@ -558,6 +564,9 @@ export class Server {
         liveTargets,
         markHeartbeat: true,
       });
+      if (ownerId !== null) {
+        observeHeartbeat(ownerId);
+      }
       reply.code(HTTP_STATUS.OK).send({
         success: true,
         bridgeInstanceId: this.bridgeInstanceId,
