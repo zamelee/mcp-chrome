@@ -123,14 +123,17 @@ export function sanitizeText(text: string): { text: string; redacted: boolean } 
     }
   }
 
-  // Base64 编码数据检测（20+ 字符的 Base64 字符串）
-  if (/^[A-Za-z0-9+/]{20,}={0,2}$/.test(out)) {
-    return { text: '[BLOCKED: Base64 encoded data]', redacted: true };
-  }
-
-  // Hex credential 检测（32+ 字符的纯十六进制）
+  // Hex credential 检测先于 Base64 —— Hex 字符 [a-f0-9] 是 Base64 字符集 [A-Za-z0-9+/]
+  // 的子集。如果 Base64 先匹配,纯 hex 字符串（如 sha1）会被错误归类为 "Base64"。
+  // v1.8.1 patch: 修复顺序问题（实测确认: 40 字符 sha1 之前报 "Base64"）。
   if (/^[a-f0-9]{32,}$/i.test(out)) {
     return { text: '[BLOCKED: Hex credential]', redacted: true };
+  }
+
+  // Base64 编码数据检测（20+ 字符的 Base64 字符串,必须含 +/= 才算,
+  // 否则纯 hex 会被误判;上面那条已经处理了纯 hex 情况）
+  if (/^[A-Za-z0-9+/]{20,}={0,2}$/.test(out)) {
+    return { text: '[BLOCKED: Base64 encoded data]', redacted: true };
   }
 
   // 2. Bearer token
