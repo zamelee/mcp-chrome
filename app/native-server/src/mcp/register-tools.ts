@@ -11,6 +11,8 @@ import { randomUUID } from 'node:crypto';
 import { SessionExpiredError, TabGoneError, safetyLevelFor, SafetyLevel } from '../tool-safety';
 import { getLatestExtensionConnection } from '../control-state';
 import { HEARTBEAT_STALE_MS } from '../constant';
+import { buildSessionMeta, type McpSessionMeta } from './session-meta';
+import { getReloadContext } from './reload-context';
 
 interface ToolActivity {
   requestId: string;
@@ -171,16 +173,28 @@ async function resolveWriteTab(args: any, signal?: AbortSignal): Promise<any> {
  * All preflight failures are surfaced as MCP semantic errors
  * ({code: "SESSION_EXPIRED" | "TAB_GONE"}) so newer clients can switch on
  * `code` and skip retries; older clients still see a useful message string.
+ *
+ * v1.8+ soft-degradation protocol (RFC docs/rfcs/2026-08-02-mcp-session-soft-degradation.md):
+ *   - NORMAL              → continue (liveTargets check below)
+ *   - STALE_RECOVERED     → return { degraded: true, meta }, caller attaches _meta
+ *   - EXTENSION_STARTING  → return error with retryAfterMs (retryable)
+ *   - SESSION_NOT_FOUND   → return error (conn never registered, hard fail)
+ *
+ * Legacy SESSION_EXPIRED is preserved for "tab/target not in live set" (client error,
+ * not session lifecycle). v1.7.4-era SESSION_EXPIRED for "heartbeat stale" is
+ * replaced by STALE_RECOVERED + EXTENSION_STARTING per the four-state judgment.
  */
 /**
  * @internal exported solely so unit tests can drive the decision tree without
  * spinning up a full MCP server. Production code reaches it indirectly via
  * handleToolCall.
  */
-export function runPreflight(
-  name: string,
-  args: any,
-): { isError: true; content: Array<{ type: 'text'; text: string }> } | null {
+export type PreflightResult =
+  | { isError: true; content: Array<{ type: 'text'; text: string }> }
+  | { degraded: true; meta: McpSessionMeta }
+  | null;
+
+export function runPreflight(name: string, args: any): PreflightResult {
   const conn = getLatestExtensionConnection();
   const level = safetyLevelFor(name);
 
@@ -189,12 +203,47 @@ export function runPreflight(
 
   // TabBound + CdpBound both need a live extension heartbeat.
   if (!conn) {
-    return errorResult(name, 'SESSION_EXPIRED', 'extension has not registered since bridge start');
+    // v1.8+: SESSION_NOT_FOUND replaces SESSION_EXPIRED for "never registered".
+    return errorResult(
+      name,
+      'SESSION_NOT_FOUND',
+      'extension has not registered since bridge start',
+    );
   }
   // 90s = 1.5x HEARTBEAT_INTERVAL_MS (60s). Must stay > heartbeat interval so
   // the preflight does not fire between heartbeats (previous 5s threshold
   // rejected ~92% of every minute; see constant/HEARTBEAT_STALE_MS).
   if (Date.now() - conn.lastHeartbeat > HEARTBEAT_STALE_MS) {
+    // v1.8+ four-state judgment via session-meta.ts (Phase 1a).
+    const meta = buildSessionMeta(conn, getReloadContext());
+
+    if (meta.sessionStatus === 'extension_starting') {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              code: 'EXTENSION_STARTING',
+              recoverable: true,
+              toolName: name,
+              retryAfterMs: meta.retryAfterMs,
+              heartbeatGapMs: meta.heartbeatGapMs,
+              reloadGapMs: meta.reloadGapMs,
+              message:
+                `Extension reloading (last heartbeat ${Math.round((meta.heartbeatGapMs ?? 0) / 1000)}s ago). ` +
+                `Retry after ${meta.retryAfterMs}ms.`,
+            }),
+          },
+        ],
+      };
+    }
+
+    if (meta.sessionStatus === 'stale_recovered') {
+      return { degraded: true, meta };
+    }
+
+    // Defensive fallback (should not be reachable per buildSessionMeta contract).
     return errorResult(
       name,
       'SESSION_EXPIRED',
@@ -256,7 +305,7 @@ export function runPreflight(
 
 function errorResult(
   toolName: string,
-  code: 'SESSION_EXPIRED' | 'TAB_GONE',
+  code: 'SESSION_NOT_FOUND' | 'EXTENSION_STARTING' | 'SESSION_EXPIRED' | 'TAB_GONE',
   message: string,
 ): { isError: true; content: Array<{ type: 'text'; text: string }> } {
   const payload = {
@@ -273,18 +322,36 @@ function errorResult(
   };
 }
 
+/**
+ * Attach a v1.8+ soft-degradation _meta to a successful tool result.
+ *
+ * - If `meta` is null (NORMAL preflight), returns the result unchanged.
+ * - If `meta` is present (STALE_RECOVERED preflight), merges it into
+ *   `result._meta`. Per MCP spec, `_meta` is an open-ended object on
+ *   CallToolResult, so we don't clobber any existing fields.
+ *
+ * Pure helper; no module state.
+ */
+function attachDegradedMeta(result: CallToolResult, meta: McpSessionMeta | null): CallToolResult {
+  if (!meta) return result;
+  return {
+    ...result,
+    _meta: { ...(result as any)._meta, ...meta },
+  };
+}
+
 const handleToolCall = async (
   name: string,
   args: any,
   signal?: AbortSignal,
 ): Promise<CallToolResult> => {
-  // Plan 1.4: preflight - refuse the call with a structured SESSION_EXPIRED
-  // error if the extension has not been heard from recently. This stops the
-  // previous silent-corruption failure mode where a stale MCP session id kept
-  // sending CDP requests at a dead extension after `chrome://extensions`
-  // reloaded the extension.
+  // Plan 1.4: preflight - refuse the call with a structured error if the
+  // extension has not been heard from recently (or hard fail if extension
+  // never registered). v1.8+: also return a degraded marker for
+  // STALE_RECOVERED so the caller can attach _meta to the tool result.
   const preflight = runPreflight(name, args);
-  if (preflight) return preflight;
+  if (preflight && 'isError' in preflight) return preflight;
+  const degradedMeta = preflight && 'degraded' in preflight ? preflight.meta : null;
 
   const activity: ToolActivity = {
     requestId: randomUUID(),
@@ -330,7 +397,7 @@ const handleToolCall = async (
         );
         if (proxyRes.status === 'success') {
           activity.outcome = 'success';
-          return proxyRes.data;
+          return attachDegradedMeta(proxyRes.data, degradedMeta);
         }
         activity.outcome = 'error';
         activity.error = proxyRes.error;
@@ -371,7 +438,7 @@ const handleToolCall = async (
     );
     if (response.status === 'success') {
       activity.outcome = 'success';
-      return response.data;
+      return attachDegradedMeta(response.data, degradedMeta);
     } else {
       activity.outcome = 'error';
       activity.error = response.error;
