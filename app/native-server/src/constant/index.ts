@@ -26,17 +26,26 @@ export const TIMEOUTS = {
  * assertRuntime. If Date.now() - lastHeartbeat > HEARTBEAT_STALE_MS we
  * refuse the tool call with SESSION_EXPIRED.
  *
- * MUST stay > HEARTBEAT_INTERVAL_MS (60s in bridge-control.ts) so the
- * check does not fire spuriously between heartbeats. With a 60s heartbeat
- * interval and a 5s threshold, ~92% of every minute was SESSION_EXPIRED
- * (the 5s window after each heartbeat is the only working window).
+ * MUST stay > HEARTBEAT_INTERVAL_MS (30s in bridge-control.ts since v1.8.2) so the
+ * check does not fire spuriously between heartbeats. With a 30s heartbeat
+ * interval and a 5s threshold (the v1.7.1 bug), ~83% of every minute was
+ * SESSION_EXPIRED. 150s leaves a >75s working window after each heartbeat.
  *
- * We pick 90s (1.5x heartbeat interval) as the canonical one missed
- * heartbeat detection: tolerant of one skipped heartbeat (MV3 service
- * worker throttling, network blip) but still flags a real reload within
- * ~90s of the extension going away.
+ * v1.8.2 bump from 90s to 150s. Full jitter budget (RFC
+ * docs/rfcs/2026-08-02-mcp-watchdog-keepalive.md):
+ *
+ *   alarm jitter       70s worst (not earlier than + background throttling)
+ *   SW cold start        5s (complex extension JS + IndexedDB migration)
+ *   network RTT          5s (localhost <10ms; remote/VPN up to 5s)
+ *   bridge processing     1s (doHeartbeat -> register -> state write)
+ *   margin              69s
+ *   -------------------
+ *   total             150s
+ *
+ * 150s gives 5x the 30s HEARTBEAT_INTERVAL_MS, tolerating two consecutive
+ * worst-case alarm delays before declaring the extension dead.
  */
-export const HEARTBEAT_STALE_MS = 90_000;
+export const HEARTBEAT_STALE_MS = 150_000;
 
 /**
  * Extension heartbeat interval (mirror of the extension-side constant
@@ -50,7 +59,7 @@ export const HEARTBEAT_STALE_MS = 90_000;
  * EXTENSION_STARTING call. If the extension changes its interval, update
  * this constant in the same release.
  */
-export const HEARTBEAT_INTERVAL_MS = 60_000;
+export const HEARTBEAT_INTERVAL_MS = 30_000;
 
 // Server configuration
 export const SERVER_CONFIG = {

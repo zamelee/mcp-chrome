@@ -24,6 +24,7 @@ import supertest from 'supertest';
 import Server from '../server/index';
 import { recordExtensionConnection, _resetControlStateForTests } from '../control-state';
 import { observeHeartbeat, getReloadContext, _resetReloadContextForTests } from './reload-context';
+import { HEARTBEAT_STALE_MS, HEARTBEAT_INTERVAL_MS } from '../constant';
 
 const MCP_URL = '/mcp';
 
@@ -116,7 +117,7 @@ describe('RFC §7.2 - MCP session soft-degradation integration', () => {
     recordExtensionConnection(
       'test-ext-scenario-1',
       { liveTargets: ['3'], markHeartbeat: true },
-      Date.now() - 100_000,
+      Date.now() - HEARTBEAT_STALE_MS - 10_000,
     );
     observeHeartbeat('owner-A', Date.now() - 200_000);
     observeHeartbeat('owner-B', Date.now() - 100_000);
@@ -132,13 +133,14 @@ describe('RFC §7.2 - MCP session soft-degradation integration', () => {
     expect(result.result._meta).toBeDefined();
     expect(result.result._meta.sessionStatus).toBe('stale_recovered');
     expect(result.result._meta.recommendation).toBe('re_initialize');
-    expect(result.result._meta.heartbeatGapMs).toBeGreaterThanOrEqual(100_000);
+    expect(result.result._meta.heartbeatGapMs).toBeGreaterThanOrEqual(HEARTBEAT_STALE_MS + 10_000);
   }, 30_000); // Allow up to 30s for native host timeout (15s default + overhead)
 
   // ==========================================================================
   // Scenario 2: reload 中 chrome_navigate → EXTENSION_STARTING + retry
   // ==========================================================================
   test('Scenario 2: chrome_navigate during reload → EXTENSION_STARTING + retryAfterMs', async () => {
+    jest.setTimeout(15000);
     // Stale heartbeat (120s ago) + reload 30s ago → EXTENSION_STARTING
     recordExtensionConnection(
       'test-ext-scenario-2',

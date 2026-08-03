@@ -16,7 +16,12 @@
 
 const REGISTER_PATH = '/internal/register';
 const HEARTBEAT_PATH = '/internal/heartbeat';
-const HEARTBEAT_INTERVAL_MS = 60_000;
+const HEARTBEAT_INTERVAL_MS = 30_000;
+// v1.8.2: alarm 30s wakes SW even after MV3 idle freeze; setInterval 30s is the
+// backup for when SW is alive. Both fire the same idempotent doHeartbeat().
+// Native-side HEARTBEAT_STALE_MS = 150s gives 5x jitter tolerance (R2 ChatGPT
+// math: 70s alarm + 5s SW cold start + 5s network + 1s bridge + 69s margin).
+const HEARTBEAT_ALARM_NAME = 'bridge-heartbeat';
 
 // v1.8+ soft degradation (RFC §6.1.4): include ownerId in heartbeat body
 // so bridge can detect SW reload events.
@@ -118,6 +123,9 @@ function stopHeartbeat(): void {
     clearInterval(state.timer);
     state.timer = null;
   }
+  // v1.8.2: also clear the alarm so a stopped heartbeat loop is not woken
+  // by an outstanding alarm (e.g. after bridge disconnect during dev).
+  void chrome.alarms.clear(HEARTBEAT_ALARM_NAME);
 }
 
 // ===========================================================================
@@ -157,10 +165,25 @@ function startHeartbeat(): void {
     void doHeartbeat();
   }, HEARTBEAT_INTERVAL_MS);
   // No .unref() in MV3 service workers — keep the timer alive.
+
+  // v1.8.2: chrome.alarms 30s wakes the SW even after MV3 idle freeze (30s+ of
+  // no user activity). setInterval dies with the SW; alarm survives. Both fire
+  // the same idempotent doHeartbeat(), so a redundant call is harmless.
+  // chrome.alarms minimum periodInMinutes is 0.5 on Chrome >= 120 (we use 134+).
+  chrome.alarms.create(HEARTBEAT_ALARM_NAME, { periodInMinutes: 0.5 });
 }
 // chrome.tabs.* listeners are attached at module load above so the bridge
 // sees tab lifecycle events immediately. triggerImmediateHeartbeatIfActive
 // guards against firing before the heartbeat loop is started.
+
+// v1.8.2: alarm listener. Attached at module load (one-shot, never double-bind)
+// because chrome.alarms.onAlarm.addListener accumulates across hot-reloads.
+// The same triggerImmediateHeartbeatIfActive guard prevents firing when the
+// heartbeat loop has been stopped via onBridgeStopped().
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== HEARTBEAT_ALARM_NAME) return;
+  triggerImmediateHeartbeatIfActive();
+});
 
 /**
  * Called by native-host.ts whenever the bridge confirms SERVER_STARTED on a

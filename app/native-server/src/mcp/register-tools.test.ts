@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach } from '@jest/globals';
 import { runPreflight } from './register-tools';
 import { recordExtensionConnection, _resetControlStateForTests } from '../control-state';
 import { _resetReloadContextForTests } from './reload-context';
+import { HEARTBEAT_INTERVAL_MS, HEARTBEAT_STALE_MS } from '../constant';
 
 describe('Plan 1.4 - tool preflight (runPreflight)', () => {
   beforeEach(() => {
@@ -29,7 +30,7 @@ describe('Plan 1.4 - tool preflight (runPreflight)', () => {
     recordExtensionConnection(
       'test-ext-preflight-stale',
       { liveTargets: ['tgt-1'], markHeartbeat: true },
-      Date.now() - 120_000, // 120s old, threshold is 90s (HEARTBEAT_STALE_MS)
+      Date.now() - HEARTBEAT_STALE_MS - 10_000, // stale (160s old), threshold is 150s (HEARTBEAT_STALE_MS)
     );
     const out = runPreflight('chrome_click', { tabId: 3 });
     // v1.8+: heartbeat stale + no reload detected → STALE_RECOVERED (degraded)
@@ -37,7 +38,7 @@ describe('Plan 1.4 - tool preflight (runPreflight)', () => {
     expect(out && 'degraded' in out).toBe(true);
     if (out && 'degraded' in out) {
       expect(out.meta.sessionStatus).toBe('stale_recovered');
-      expect(out.meta.heartbeatGapMs).toBeGreaterThanOrEqual(120_000);
+      expect(out.meta.heartbeatGapMs).toBeGreaterThanOrEqual(HEARTBEAT_STALE_MS + 10_000);
       expect(out.meta.recommendation).toBe('re_initialize');
     }
   });
@@ -46,7 +47,7 @@ describe('Plan 1.4 - tool preflight (runPreflight)', () => {
     recordExtensionConnection(
       'test-ext-preflight-between-heartbeats',
       { liveTargets: ['3'], markHeartbeat: true },
-      Date.now() - 60_000, // 60s old = exactly 1 heartbeat interval
+      Date.now() - HEARTBEAT_INTERVAL_MS, // 60s old = exactly 1 heartbeat interval
     );
     expect(runPreflight('chrome_click', { tabId: 3 })).toBeNull();
   });
@@ -153,9 +154,9 @@ describe('v1.8+ soft-degradation runPreflight', () => {
     recordExtensionConnection(
       'test-ext-starting',
       { liveTargets: ['3'], markHeartbeat: true },
-      Date.now() - 100_000,
+      Date.now() - HEARTBEAT_STALE_MS - 10_000,
     );
-    observeHeartbeat('owner-A', Date.now() - 200_000);
+    observeHeartbeat('owner-A', Date.now() - HEARTBEAT_STALE_MS - 200_000);
     observeHeartbeat('owner-B', Date.now() - 30_000);
 
     const out = runPreflight('chrome_click', { tabId: 3 });
@@ -167,7 +168,7 @@ describe('v1.8+ soft-degradation runPreflight', () => {
       expect(payload.toolName).toBe('chrome_click');
       expect(payload.retryAfterMs).toBeGreaterThanOrEqual(1000);
       expect(payload.retryAfterMs).toBeLessThanOrEqual(62_000);
-      expect(payload.heartbeatGapMs).toBeGreaterThanOrEqual(100_000);
+      expect(payload.heartbeatGapMs).toBeGreaterThanOrEqual(HEARTBEAT_STALE_MS + 10_000);
       expect(payload.reloadGapMs).toBe(30_000);
     } else {
       throw new Error('expected isError result');
@@ -179,17 +180,17 @@ describe('v1.8+ soft-degradation runPreflight', () => {
     recordExtensionConnection(
       'test-ext-stale',
       { liveTargets: ['3'], markHeartbeat: true },
-      Date.now() - 100_000,
+      Date.now() - HEARTBEAT_STALE_MS - 10_000,
     );
-    observeHeartbeat('owner-A', Date.now() - 200_000);
-    observeHeartbeat('owner-B', Date.now() - 100_000);
+    observeHeartbeat('owner-A', Date.now() - HEARTBEAT_STALE_MS - 200_000);
+    observeHeartbeat('owner-B', Date.now() - HEARTBEAT_STALE_MS - 50_000);
 
     const out = runPreflight('chrome_click', { tabId: 3 });
     expect(out).not.toBeNull();
     if (out && 'degraded' in out) {
       expect(out.meta.sessionStatus).toBe('stale_recovered');
       expect(out.meta.recommendation).toBe('re_initialize');
-      expect(out.meta.heartbeatGapMs).toBeGreaterThanOrEqual(100_000);
+      expect(out.meta.heartbeatGapMs).toBeGreaterThanOrEqual(HEARTBEAT_STALE_MS + 10_000);
     } else {
       throw new Error('expected degraded result');
     }

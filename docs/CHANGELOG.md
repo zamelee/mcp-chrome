@@ -1,3 +1,38 @@
+## [v1.8.2] - 2026-08-02
+
+### Added
+
+- **chrome.alarms 30s heartbeat wakeup (MV3 SW freeze protection)** - `app/chrome-extension/entrypoints/background/bridge-control.ts` now schedules `chrome.alarms.create("bridge-heartbeat", { periodInMinutes: 0.5 })` alongside the existing 30s `setInterval`. Chrome >= 120 minimum period is 30s (RFC docs/rfcs/2026-08-02-mcp-watchdog-keepalive.md). The alarm wakes the service worker even after MV3 idle freeze (30s+ of no user activity) so the heartbeat producer stays alive when `setInterval` dies with the SW. Both paths fire the same idempotent `doHeartbeat()`, so a redundant call is harmless. `chrome.alarms.onAlarm.addListener` registered at module load (one-shot, never double-bind); the existing `triggerImmediateHeartbeatIfActive` guard (`state.timer === null` short-circuit) prevents the alarm from firing after `onBridgeStopped()`. `chrome.alarms.clear(HEARTBEAT_ALARM_NAME)` called from `stopHeartbeat()` so a stopped loop is not woken by an outstanding alarm.
+
+### Changed
+
+- **`HEARTBEAT_INTERVAL_MS`: 60_000 -> 30_000** (extension-side `bridge-control.ts` + mirror in `app/native-server/src/constant/index.ts`). Matches the new `chrome.alarms.create({ periodInMinutes: 0.5 })` rate. The pre-existing setInterval backup also fires at 30s.
+- **`HEARTBEAT_STALE_MS`: 90_000 -> 150_000** (app/native-server/src/constant/index.ts). Full jitter budget per ChatGPT R2 audit (RFC §Testing-strategy): alarm 70s worst + SW cold start 5s + network 5s + bridge 1s + margin 69s = 150s. 150s is 5x the 30s heartbeat interval, comfortably tolerating two consecutive worst-case alarm delays before declaring the extension dead.
+- **Comments updated**: `app/native-server/src/constant/index.ts` HEARTBEAT_STALE_MS / HEARTBEAT_INTERVAL_MS docblocks now reference the watchdog RFC and explain the math. `bridge-control.ts` heartbeat block comment explains why both alarm and setInterval coexist.
+- **`stopHeartbeat()` uses fire-and-forget `void chrome.alarms.clear(...)`** instead of `.catch(() => undefined)`. The vi.fn() chrome mock in vitest.setup.ts returns `undefined` (not a Promise), and `.catch` would crash; `void` is the documented best-effort pattern. Same fallback semantics (alarm may already be cleared; non-actionable failure).
+
+### Fixed
+
+- (None - this is a defense-in-depth patch over v1.8.1's soft-deg protocol, not a bug fix.)
+
+### Tests
+
+- New: `app/chrome-extension/tests/background/bridge-control.test.ts` (3 tests). Covers `chrome.alarms.create({ periodInMinutes: 0.5 })` arg shape, `chrome.alarms.clear(HEARTBEAT_ALARM_NAME)` on stop, and the port-deduplication no-op when `onBridgeStarted` is called twice with the same port.
+- Updated: `app/native-server/src/mcp/session-meta.test.ts` (30 tests). All hardcoded `100_000` / `60_000` constants replaced with `HEARTBEAT_STALE_MS + 10_000` / `HEARTBEAT_INTERVAL_MS` so tests track the threshold automatically. `computeRetryAfterMs` test cases updated for the new 30s interval (was: `0 -> 62000ms` is now `HEARTBEAT_INTERVAL_MS + 2000 = 32000ms`).
+- Updated: `app/native-server/src/mcp/register-tools.test.ts` (16 tests). `HEARTBEAT_STALE_MS` / `HEARTBEAT_INTERVAL_MS` imported from `../constant` and used throughout. The two stale-reload assertions now use `HEARTBEAT_STALE_MS + 10_000` for the heartbeat gap and `HEARTBEAT_STALE_MS + 50_000` for the reload gap, so the test still targets the "stale + reload long ago" boundary under the new 150s threshold.
+- Updated: `app/native-server/src/mcp/integration.test.ts` (4 tests). Same constant usage as `register-tools.test.ts`. Scenarios 1 and 2 still reference the v1.8.1 soft-deg protocol but had hardcoded `100_000` / `200_000` stale offsets which were just under the new 150s threshold; updated to `HEARTBEAT_STALE_MS + 10_000` / `HEARTBEAT_STALE_MS + 50_000`.
+
+### Known follow-up (out of scope for v1.8.2)
+
+- `integration.test.ts` Scenarios 1 and 2 expect `result.result._meta` but the SSE pipeline returns `result.result === undefined`. This is a v1.8.1 soft-deg bug independent of the watchdog patch: the `runPreflight` returns `{ degraded, meta }` correctly but `callTool` doesn't propagate it through the SSE response. Tracked separately; will be addressed in v1.8.3 or a follow-up RFC. Not blocking v1.8.2 release (the soft-deg `_meta` attachment is documented in register-tools.ts but not yet wired through the SSE response layer).
+- 2/107 native-server tests fail (integration.test.ts Scenarios 1 and 2) for the above reason. 105/107 + 500/500 chrome-extension pass.
+
+### Notes
+
+- Math source for the 150s threshold: ChatGPT R2 audit of the v1.8.1 P0 recommendation (RFC §3.1, see `tmp/chatgpt_watchdog_R2.txt`). R1 had proposed 120s; R2 corrected to 150s with a complete jitter budget breakdown.
+- `chrome.alarms` is "not earlier than" the requested period; worst-case observed in production ~70s (R2 reports 40-70s typical). Worst-case plus margin is what the 150s threshold absorbs. **Machine sleep is NOT covered** (alarm can be delayed by hours after laptop wake) - this needs product-UX work, not threshold tuning.
+- The v1.8.1 soft-deg protocol still applies: stale heartbeat + recent reload = `EXTENSION_STARTING` (retryable), stale + old reload = `STALE_RECOVERED` (accept-with-meta). v1.8.2 just makes the heartbeat arrive on time under MV3 freeze.
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

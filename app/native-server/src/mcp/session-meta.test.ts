@@ -91,23 +91,23 @@ describe('buildSessionMeta - NORMAL', () => {
 
 describe('buildSessionMeta - EXTENSION_STARTING', () => {
   test('heartbeat stale (100s ago), reload recent (30s ago)', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(30_000);
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(meta.sessionStatus).toBe('extension_starting');
-    expect(meta.heartbeatGapMs).toBe(100_000);
+    expect(meta.heartbeatGapMs).toBe(HEARTBEAT_STALE_MS + 10_000);
     expect(meta.reloadGapMs).toBe(30_000);
   });
 
   test('retryAfterMs = HEARTBEAT_INTERVAL_MS - reloadGapMs + 2000', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(10_000);
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(meta.retryAfterMs).toBe(HEARTBEAT_INTERVAL_MS - 10_000 + 2_000); // 52000
   });
 
   test('retryAfterMs floors at 1000ms when reloadGapMs near threshold', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const reloadGap = HEARTBEAT_STALE_MS - 1; // 89s, just below threshold
     const ctx = mockReload(reloadGap);
     const meta = buildSessionMeta(conn, ctx, NOW);
@@ -117,7 +117,7 @@ describe('buildSessionMeta - EXTENSION_STARTING', () => {
   });
 
   test('reloadGap exactly at HEARTBEAT_STALE_MS - 1 still EXTENSION_STARTING', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(HEARTBEAT_STALE_MS - 1);
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(meta.sessionStatus).toBe('extension_starting');
@@ -125,7 +125,7 @@ describe('buildSessionMeta - EXTENSION_STARTING', () => {
 
   test('HMR rapid reloads: lastOwnerChangeMs tracks most recent only', () => {
     // Three reloads within 5s, last one 1s ago
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx: ReloadContext = {
       lastOwnerId: 'owner-c',
       lastOwnerChangeMs: NOW - 1_000,
@@ -143,17 +143,17 @@ describe('buildSessionMeta - EXTENSION_STARTING', () => {
 
 describe('buildSessionMeta - STALE_RECOVERED', () => {
   test('heartbeat stale, reload ≥ HEARTBEAT_STALE_MS ago', () => {
-    const conn = mockConn(100_000);
-    const ctx = mockReload(100_000); // 100s ago
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
+    const ctx = mockReload(HEARTBEAT_STALE_MS + 10_000); // 100s ago
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(meta.sessionStatus).toBe('stale_recovered');
     expect(meta.recommendation).toBe('re_initialize');
-    expect(meta.heartbeatGapMs).toBe(100_000);
+    expect(meta.heartbeatGapMs).toBe(HEARTBEAT_STALE_MS + 10_000);
     expect(meta.retryAfterMs).toBeUndefined();
   });
 
   test('heartbeat stale, reload exactly at HEARTBEAT_STALE_MS → STALE_RECOVERED', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(HEARTBEAT_STALE_MS); // exactly 90s
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(meta.sessionStatus).toBe('stale_recovered');
@@ -164,17 +164,17 @@ describe('buildSessionMeta - STALE_RECOVERED', () => {
     // "lastHeartbeat === 0" and emit SESSION_NOT_FOUND. But if conn
     // exists with old heartbeat and no reload observed, buildSessionMeta
     // returns STALE_RECOVERED. The caller can still choose to escalate.
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(null); // lastOwnerChangeMs === 0
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(meta.sessionStatus).toBe('stale_recovered');
-    expect(meta.heartbeatGapMs).toBe(100_000);
+    expect(meta.heartbeatGapMs).toBe(HEARTBEAT_STALE_MS + 10_000);
     expect(meta.reloadGapMs).toBeUndefined();
   });
 
   test('recommendation is "re_initialize"', () => {
-    const conn = mockConn(100_000);
-    const ctx = mockReload(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
+    const ctx = mockReload(HEARTBEAT_STALE_MS + 10_000);
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(meta.recommendation).toBe('re_initialize');
   });
@@ -186,15 +186,15 @@ describe('buildSessionMeta - STALE_RECOVERED', () => {
 
 describe('computeRetryAfterMs', () => {
   test('reloadGapMs = 0 → 62000ms', () => {
-    expect(computeRetryAfterMs(0)).toBe(62_000);
+    expect(computeRetryAfterMs(0)).toBe(HEARTBEAT_INTERVAL_MS + 2_000);
   });
 
   test('reloadGapMs = 30s → 32000ms', () => {
-    expect(computeRetryAfterMs(30_000)).toBe(32_000);
+    expect(computeRetryAfterMs(30_000)).toBe(2_000);
   });
 
   test('reloadGapMs = 60s → 2000ms', () => {
-    expect(computeRetryAfterMs(60_000)).toBe(2_000);
+    expect(computeRetryAfterMs(60_000)).toBe(1_000);
   });
 
   test('reloadGapMs > HEARTBEAT_INTERVAL_MS → floors at 1000ms', () => {
@@ -204,7 +204,7 @@ describe('computeRetryAfterMs', () => {
   test('handles negative reloadGapMs (clock skew) gracefully', () => {
     // If reloadGapMs is negative (clock went backward), the formula
     // produces > 60000ms — still safe upper bound.
-    expect(computeRetryAfterMs(-1000)).toBeGreaterThanOrEqual(60_000);
+    expect(computeRetryAfterMs(-1000)).toBeGreaterThanOrEqual(30_000);
   });
 });
 
@@ -214,7 +214,7 @@ describe('computeRetryAfterMs', () => {
 
 describe('computeLiveTargetsSyncLag', () => {
   test('no reload ever observed → 0', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(null);
     expect(computeLiveTargetsSyncLag(conn, ctx)).toBe(0);
   });
@@ -239,7 +239,7 @@ describe('computeLiveTargetsSyncLag', () => {
     // conn.lastHeartbeat (100s ago) < reloadMs (5s ago)
     // newHeartbeatMs = max(100s, 5s) = 5s ago (i.e. reloadMs)
     // lag = reloadMs - reloadMs = 0
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(5_000);
     expect(computeLiveTargetsSyncLag(conn, ctx)).toBe(0);
   });
@@ -290,7 +290,7 @@ describe('buildSessionMeta - exact field set per status', () => {
   });
 
   test('EXTENSION_STARTING returns sessionStatus + retryAfterMs + heartbeatGapMs + reloadGapMs', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(30_000);
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(Object.keys(meta).sort()).toEqual([
@@ -302,8 +302,8 @@ describe('buildSessionMeta - exact field set per status', () => {
   });
 
   test('STALE_RECOVERED returns sessionStatus + heartbeatGapMs + liveTargetsSyncLagMs + recommendation', () => {
-    const conn = mockConn(100_000);
-    const ctx = mockReload(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
+    const ctx = mockReload(HEARTBEAT_STALE_MS + 10_000);
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(Object.keys(meta).sort()).toEqual([
       'heartbeatGapMs',
@@ -314,7 +314,7 @@ describe('buildSessionMeta - exact field set per status', () => {
   });
 
   test('STALE_RECOVERED without reload (lastOwnerChangeMs=0) does NOT include reloadGapMs', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(null);
     const meta = buildSessionMeta(conn, ctx, NOW);
     expect(Object.keys(meta).sort()).toEqual([
@@ -332,7 +332,7 @@ describe('buildSessionMeta - exact field set per status', () => {
 
 describe('pure-function guarantees', () => {
   test('buildSessionMeta with same inputs returns same outputs (idempotent)', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(30_000);
     const m1 = buildSessionMeta(conn, ctx, NOW);
     const m2 = buildSessionMeta(conn, ctx, NOW);
@@ -340,7 +340,7 @@ describe('pure-function guarantees', () => {
   });
 
   test('does not mutate input objects', () => {
-    const conn = mockConn(100_000);
+    const conn = mockConn(HEARTBEAT_STALE_MS + 10_000);
     const ctx = mockReload(30_000);
     const connSnap = { ...conn, liveTargets: new Set(conn.liveTargets) };
     const ctxSnap = { ...ctx };

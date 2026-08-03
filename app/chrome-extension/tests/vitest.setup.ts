@@ -76,5 +76,20 @@ if (typeof globalThis.chrome === 'undefined') {
       remove: vi.fn(),
       onClicked: { addListener: vi.fn(), removeListener: vi.fn() },
     },
+    // v1.8.2: chrome.alarms mock for bridge-control.ts alarm path. Test code
+    // verifies create({periodInMinutes:0.5}) was called with the right args.
+    // NOTE: use mockImplementation (not mockResolvedValue) because the
+    // vitest.config.ts `clearMocks: true` flag strips mockReturnValue
+    // implementations between tests in some Vitest versions; mockImplementation
+    // is preserved. We need a Promise so bridge-control.ts can `.catch()` on it.
+    alarms: {
+      create: vi.fn().mockImplementation(() => Promise.resolve()),
+      clear: vi.fn().mockImplementation(() => Promise.resolve()),
+      get: vi.fn().mockImplementation(() => Promise.resolve()),
+      onAlarm: {
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+      },
+    },
   };
 }
