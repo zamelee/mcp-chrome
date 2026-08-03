@@ -1,12 +1,12 @@
 # RFC: MCP Watchdog / Keepalive Hardening (v1.8.2)
 
-| Field          | Value                                  |
-| -------------- | -------------------------------------- |
-| Status         | Draft                                  |
-| Author         | Codex                                  |
-| Created        | 2026-08-02                             |
-| Target version | v1.8.2                                 |
-| Discussion     | handoff thread 2026-08-02              |
+| Field          | Value                     |
+| -------------- | ------------------------- |
+| Status         | Draft                     |
+| Author         | Codex                     |
+| Created        | 2026-08-02                |
+| Target version | v1.8.2                    |
+| Discussion     | handoff thread 2026-08-02 |
 
 ## 1. 摘要
 
@@ -23,11 +23,13 @@
 ### 2.1 v1.8.1 解决了什么，没解决什么
 
 v1.8.1 软降级协议针对的是 **identity continuity**：
+
 - extension reload 触发 ownerId 变化
 - bridge 检测到 → 返回 `_meta.sessionStatus="stale_recovered"` 或 retryable `EXTENSION_STARTING`
 - Codex client 不需要升级
 
 **v1.8.1 不解决的是 runtime liveness**：
+
 - MV3 SW 30s idle 后被 Chrome freeze
 - `setInterval` 跟着死
 - heartbeat 永远不到 bridge
@@ -40,6 +42,7 @@ v1.8.1 软降级协议针对的是 **identity continuity**：
 > "时间长了就扩展就假死了"
 
 实际触发的就是 MV3 SW freeze 链路：
+
 1. 用户开 page → 30s 内不做任何事 → SW freeze
 2. setInterval 跟着死，heartbeat 永远不到
 3. bridge 端 `lastHeartbeat` 老化过 90s
@@ -72,11 +75,12 @@ function startHeartbeat() {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== HEARTBEAT_ALARM_NAME) return;
-  triggerImmediateHeartbeatIfActive();  // existing guard: state.timer !== null
+  triggerImmediateHeartbeatIfActive(); // existing guard: state.timer !== null
 });
 ```
 
 **关键事实**:
+
 - `chrome.alarms` 调度独立于 SW 生命周期 — SW 死了 alarm 仍能叫醒
 - Chrome < 120: 1 minute 最小周期（不覆盖用户，降级到 setInterval 60s）
 - Chrome >= 120: 30 seconds 最小周期（我们用的）
@@ -86,26 +90,27 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 ChatGPT R2 完整 jitter 预算：
 
-| 因素 | 数值 | 说明 |
-|---|---|---|
-| alarm jitter (worst) | 70s | "not earlier than" 边界 |
-| SW cold start | 5s | complex extension 重新加载 JS + IndexedDB migration |
-| network RTT | 5s | localhost < 10ms；remote/VPN up to 5s |
-| bridge processing | 1s | doHeartbeat → register → write heartbeat state |
-| **margin** | 69s | 兜底 |
-| **total** | **150s** | |
+| 因素                 | 数值     | 说明                                                |
+| -------------------- | -------- | --------------------------------------------------- |
+| alarm jitter (worst) | 70s      | "not earlier than" 边界                             |
+| SW cold start        | 5s       | complex extension 重新加载 JS + IndexedDB migration |
+| network RTT          | 5s       | localhost < 10ms；remote/VPN up to 5s               |
+| bridge processing    | 1s       | doHeartbeat → register → write heartbeat state      |
+| **margin**           | 69s      | 兜底                                                |
+| **total**            | **150s** |                                                     |
 
 150s = 5 × HEARTBEAT_INTERVAL_MS(30s)，允许**连续两个 worst-case alarm delay** 才判断扩展死亡。
 
 ### 4.3 与 v1.8.1 soft-deg 的关系
 
-| layer | v1.8.1 解决 | v1.8.2 解决 |
-|---|---|---|
-| identity continuity (ownerId drift) | ✓ | (保留) |
-| runtime liveness (SW frozen) | ✗ | **✓** |
-| machine sleep (laptop wake hours later) | ✗ | ✗ (product-UX) |
+| layer                                   | v1.8.1 解决 | v1.8.2 解决    |
+| --------------------------------------- | ----------- | -------------- |
+| identity continuity (ownerId drift)     | ✓           | (保留)         |
+| runtime liveness (SW frozen)            | ✗           | **✓**          |
+| machine sleep (laptop wake hours later) | ✗           | ✗ (product-UX) |
 
 **两者 orthogonal，不合并成一个状态机**。stale_threshold 是共同输入，但 action 不同：
+
 - v1.8.1: stale + ownerId 变化 → EXTENSION_STARTING (retryable error)
 - v1.8.2: 不再 stale (更多 heartbeat 到达)，但真 stale 时仍走 v1.8.1 路径
 
@@ -114,6 +119,7 @@ ChatGPT R2 完整 jitter 预算：
 按 ChatGPT R2 推荐的三层策略：
 
 ### Layer 1: Unit (vitest)
+
 - mock `chrome.alarms`
 - 验证 `create({ periodInMinutes: 0.5 })` arg shape
 - 验证 `clear(HEARTBEAT_ALARM_NAME)` on stop
@@ -121,20 +127,24 @@ ChatGPT R2 完整 jitter 预算：
 - **覆盖 70%**：测试通过 ✓ (3 tests in `tests/background/bridge-control.test.ts`)
 
 ### Layer 2: Integration (Playwright)
+
 - `chromium --load-extension=dist`
 - mock bridge server localhost
 - 暴露 debug command 触发 alarm handler
 - **状态**: 未实现（v1.9 RFC）
 
 ### Layer 3: Real Chrome smoke
+
 - Chrome 134+ Windows 30 分钟实测
 - 60 samples, mean / p95 / max delay
 - **状态**: 未实现（v1.9 RFC）
 
 **telemetry** (v1.9 RFC):
+
 ```ts
 { type: "heartbeat", source: "alarm", scheduledAt, firedAt, delay }
 ```
+
 用户反馈"假死"时直接查 alarm / bridge / SW restart 哪个环节慢。
 
 ## 6. Open issues
