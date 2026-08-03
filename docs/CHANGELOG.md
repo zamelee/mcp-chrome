@@ -1,3 +1,39 @@
+## [v1.9.3] - 2026-08-03
+
+### Fixed
+
+- **HTTP POST /mcp on stale sessionId: HTTP 400 → HTTP 200 + SESSION_NOT_FOUND CallToolResult** (RFC `docs/rfcs/2026-08-02-mcp-session-soft-degradation.md` §5.3 spec compliance). Previously, server/index.ts POST handler returned HTTP 400 `{error: "Invalid MCP request or session"}` when `request.headers['mcp-session-id']` did not match any active transport. This pre-empted the v1.8.1 soft-degradation protocol: the JSON-RPC `error` envelope never reached the client, so Codex desktop MCP client could not read `_meta.recommendation='re_initialize'` to recover. Fix: stale-sessionId path now returns HTTP 200 + JSON-RPC `result` with `{content: [{type: "text", text: "{code:'SESSION_NOT_FOUND', recommendation:'re_initialize', ...}"}], isError: true, _meta: {sessionStatus: 'stale_recovered', recommendation: 're_initialize'}}`. Clients that respect MCP JSON-RPC envelope semantics can now re_initialize cleanly instead of looping on 400.
+- **Pre-existing TS error in session-meta.ts**: `computeLiveTargetsSyncLag(conn, reloadContext, nowMs)` was called with 3 args but function signature is 2-arg (per RFC §5.2 phase 1a review). Removed nowMs arg. Required fixing before `tsc --noEmit` would pass.
+- **app/native-server/package.json**: 1.8.2 → 1.9.3 (version sync)
+- **app/chrome-extension/package.json**: 1.9.1 → 1.9.3 (version sync, so Chrome extensions page shows 1.9.3 after rebuild)
+
+### Tests
+
+- integration.test.ts: 4/4 pass (Scenario 1+2+3 + Sanity). Previously Sanity was passing too because the new SESSION_NOT_FOUND test path now exists from this commit.
+- Total: 107/107 native-server + 505/505 chrome-extension pass.
+
+### Notes
+
+- v1.9.3 is a direct fix for the bug visible in user-facing sessions: mcp-chrome HTTP variant would return 400 "Invalid MCP request or session" on every call after extension reload because Codex client keeps the stale sessionId. v1.9.3 makes the response shape RFC-compliant so clients can re_initialize.
+- Per AGENTS.md §0b.7.8 v1.8.1 + v1.8.1 RFC §5.3, the SESSION_NOT_FOUND response should be HTTP 200 + CallToolResult with _meta. This commit implements that spec.
+
+## [v1.9.2] - 2026-08-03
+
+### Added
+
+- **CI build consistency check** (`.github/workflows/build-consistency.yml`). Runs on PR/push to `master`/`main`/`develop` that touches `app/chrome-extension/package.json` or `wxt.config.ts`. Runs `pnpm install --frozen-lockfile` + `pnpm build`, then asserts `manifest.version === package.json.version`. Fails the PR if mismatch with actionable error message ("bump package.json or amend commit + force push tag"). Prevents the bug where release tag v1.9.1 pointed to source code with `package.json` at 1.9.0 (no bump done in the original commit), leaving the user's Chrome extensions page showing stale 1.8.1 after `git checkout v1.9.1 && pnpm build`.
+- **Release runbook** (`docs/wiki/release-runbook.md`). Documents the three-layer version sync (git tag → package.json → manifest.json), the 5-step user flow (`git checkout` → `pnpm install` → `pnpm build` → verify → Chrome reload), common pitfalls table, and CI auto-check pointer. The canonical place future maintainers point new contributors to when "the extension still shows 1.8.1 after upgrade" comes up.
+- **Permanent CHANGELOG header** (above v1.9.1 entry). Bold "build reminder" callout at top of CHANGELOG pointing to release runbook + CI workflow. Any user scrolling changelog sees the reminder before reading the first entry.
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.1 → 1.9.2 (this release)
+
+### Notes
+
+- v1.9.2 is the **release tooling patch**: no production code change. The only "user-visible" effect is that the Chrome extensions page now shows 1.9.2 (instead of 1.9.1) after `git checkout v1.9.2 && pnpm build && reload`.
+- v1.9.1 was missing this bump — it lived in a state where source code matched v1.9.0 + tests (since v1.9.1 was test-only additions to v1.9.0 PR#1). v1.9.2 commits the version bump that should have been in v1.9.1.
+- For users currently on v1.9.0 source code: nothing actionable; v1.9.0 → v1.9.2 are tooling-only diffs.
 
 ## [v1.9.1] - 2026-08-03
 
@@ -7,7 +43,7 @@
   - chrome.alarms heartbeat fires at ~30s under real Chrome
   - MV3 SW idle freeze survival (60s no user interaction)
   - reconcileState recreates offscreen after force close
-  Run via `pnpm test:e2e` (added as npm script). Skips automatically when `.output/chrome-mv3` not built.
+    Run via `pnpm test:e2e` (added as npm script). Skips automatically when `.output/chrome-mv3` not built.
 - **Smoke test runbook (v1.9 RFC PR#3)** - `docs/wiki/v1.9.0-smoke-test-runbook.md` (3.5KB). 30-minute guide for users to collect `[telemetry]` console output in real Chrome and send to maintainer. Includes maintainer checklist (heartbeat count > 30, max gap < 90s, source distribution includes `alarm`, ownerId drift).
 
 ### Notes

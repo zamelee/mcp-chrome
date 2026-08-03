@@ -147,7 +147,7 @@ export function buildSessionMeta(
   return {
     sessionStatus: 'stale_recovered',
     heartbeatGapMs,
-    liveTargetsSyncLagMs: computeLiveTargetsSyncLag(conn, reloadContext, nowMs),
+    liveTargetsSyncLagMs: computeLiveTargetsSyncLag(conn, reloadContext),
     recommendation: 're_initialize',
   };
 }

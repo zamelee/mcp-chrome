@@ -378,7 +378,34 @@ export class Server {
         };
         await getMcpServer().connect(transport);
       } else {
-        reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: ERROR_MESSAGES.INVALID_MCP_REQUEST });
+        // v1.9.3 fix (RFC docs/rfcs/2026-08-02-mcp-session-soft-degradation.md §5.3):
+        // Stale sessionId should NOT return HTTP 400 — that prevents Codex client
+        // from reading _meta. Return 200 OK + CallToolResult with isError=true +
+        // code=SESSION_NOT_FOUND so client can re_initialize cleanly.
+        const sessionNotFoundResult = {
+          jsonrpc: '2.0',
+          id: (request.body as any)?.id ?? null,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  code: 'SESSION_NOT_FOUND',
+                  recoverable: true,
+                  recommendation: 're_initialize',
+                  message: 'MCP session expired or never registered. Call initialize to recover.',
+                  sessionIdReceived: sessionId ?? null,
+                }),
+              },
+            ],
+            isError: true,
+            _meta: {
+              sessionStatus: 'stale_recovered',
+              recommendation: 're_initialize',
+            },
+          },
+        };
+        reply.code(HTTP_STATUS.OK).send(sessionNotFoundResult);
         return;
       }
 
