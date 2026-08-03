@@ -65,3 +65,8 @@ docs/ai-conversations/
 # Python bytecode cache (auto-generated)
 tools/__pycache__/
 *.pyc
+
+# Project meta / bundle scripts (per-session plans, prompt bundles)
+# Not source code; per AGENTS.md §0c.1 managed separately
+plans/
+prompts/
