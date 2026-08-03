@@ -1,12 +1,12 @@
 # RFC: keepalive-manager reconcile + Playwright integration + 30min smoke (v1.9)
 
-| Field          | Value                                  |
-| -------------- | -------------------------------------- |
-| Status         | Draft                                  |
-| Author         | Codex                                  |
-| Created        | 2026-08-03                             |
-| Target version | v1.9                                   |
-| Discussion     | handoff thread 2026-08-02 (v1.8.2 commit e5dcf5a) |
+| Field          | Value                                                   |
+| -------------- | ------------------------------------------------------- |
+| Status         | Draft                                                   |
+| Author         | Codex                                                   |
+| Created        | 2026-08-03                                              |
+| Target version | v1.9                                                    |
+| Discussion     | handoff thread 2026-08-02 (v1.8.2 commit e5dcf5a)       |
 | Parent         | v1.8.2 watchdog (RFC 2026-08-02-mcp-watchdog-keepalive) |
 
 ## 1. 摘要
@@ -21,18 +21,18 @@ v1.8.2 patch 解决了 Layer 1 (Producer) 的 MV3 SW freeze 问题。本 RFC 覆
 
 v1.8.2 (`chrome.alarms` 30s + `HEARTBEAT_STALE_MS` 150s) 解决了：
 
-| gap | 修复 |
-|---|---|
-| MV3 SW 30s idle freeze 后 setInterval 死 | alarm 30s 触发 wake |
-| heartbeat gap 过大 | stale 150s (5x jitter tolerance) |
+| gap                                      | 修复                             |
+| ---------------------------------------- | -------------------------------- |
+| MV3 SW 30s idle freeze 后 setInterval 死 | alarm 30s 触发 wake              |
+| heartbeat gap 过大                       | stale 150s (5x jitter tolerance) |
 
 但**仍有未覆盖的 gap**：
 
-| gap | v1.9 修复 |
-|---|---|
+| gap                                            | v1.9 修复                                      |
+| ---------------------------------------------- | ---------------------------------------------- |
 | Chrome memory pressure 回收 offscreen document | reconcileState() 检测 hasDocument() + recreate |
-| 没真实 Chrome 测试 (只 mock) | Playwright + load-extension |
-| 30min 实测数据缺失 | 真实用户 Chrome telemetry |
+| 没真实 Chrome 测试 (只 mock)                   | Playwright + load-extension                    |
+| 30min 实测数据缺失                             | 真实用户 Chrome telemetry                      |
 
 ## 3. 目标 / Goals
 
@@ -50,7 +50,7 @@ v1.8.2 (`chrome.alarms` 30s + `HEARTBEAT_STALE_MS` 150s) 解决了：
 
 ```ts
 interface KeepaliveController {
-  acquire(tag: string): () => void;   // returns release fn
+  acquire(tag: string): () => void; // returns release fn
   isActive(): boolean;
   getRefCount(): number;
   releaseAll(): void;
@@ -77,6 +77,7 @@ async function reconcileState(): Promise<KeepaliveState> {
 ```
 
 **调用点**：
+
 - `onAlarm` 触发时（与 heartbeat 一起跑）
 - `chrome.tabs.onCreated` 触发时（tab lifecycle event 已经存在）
 - `chrome.runtime.onStartup` 时（SW 启动）
@@ -84,6 +85,7 @@ async function reconcileState(): Promise<KeepaliveState> {
 ### 4.2 Playwright integration test
 
 测试环境要求：
+
 - 真实 Chrome stable (Playwright `channel: 'chrome'`)
 - `--load-extension=<本地 .output/chrome-mv3 路径>`
 - 临时 `userDataDir` 隔离 profile
@@ -145,6 +147,7 @@ test.describe('chrome.alarms heartbeat watchdog (v1.9)', () => {
 ```
 
 **CI 集成**：
+
 - GitHub Actions matrix: Chrome stable on linux/windows
 - 不测登录态（用全新 userDataDir）
 - 跑 3 tests 总耗时 ~2 分钟
@@ -182,11 +185,13 @@ export function recordHeartbeatTelemetry(meta: HeartbeatTelemetry): void {
 ```
 
 **数据收集**：
+
 - 用户启动 mcp-chrome 后跑 30 分钟日常使用
 - console.log 输出 telemetry JSON
 - 用户截图 console 给 maintainer（或未来自动上报）
 
 **manual smoke runbook** (`docs/wiki/v1.9-smoke-test-runbook.md`)：
+
 1. 安装 mcp-chrome 到用户日常 Chrome
 2. 开 Codex，配置 mcp-chrome MCP server
 3. 跑 30 分钟日常使用（不必专门测，正常用即可）
@@ -195,32 +200,32 @@ export function recordHeartbeatTelemetry(meta: HeartbeatTelemetry): void {
 
 ## 5. 测试策略（按 ChatGPT R2 三层）
 
-| Layer | 测试类型 | 覆盖 | v1.9 状态 |
-|---|---|---|---|
-| 1. Unit | vitest mock | 70% | ✅ v1.8.2 已加 3 tests |
-| 2. Integration | Playwright 真实 Chrome | 端到端 | **v1.9 新增** |
-| 3. Smoke | 真实用户 Chrome 30min | 真实场景 | **v1.9 新增框架** |
+| Layer          | 测试类型               | 覆盖     | v1.9 状态              |
+| -------------- | ---------------------- | -------- | ---------------------- |
+| 1. Unit        | vitest mock            | 70%      | ✅ v1.8.2 已加 3 tests |
+| 2. Integration | Playwright 真实 Chrome | 端到端   | **v1.9 新增**          |
+| 3. Smoke       | 真实用户 Chrome 30min  | 真实场景 | **v1.9 新增框架**      |
 
 ## 6. 影响范围
 
-| 文件 | 类型 | 估计改动 |
-|---|---|---|
-| `app/chrome-extension/entrypoints/background/keepalive-manager.ts` | modify | +50 lines (state machine + reconcileState) |
-| `app/chrome-extension/entrypoints/background/bridge-control.ts` | modify | +5 lines (call reconcileState on alarm) |
-| `app/chrome-extension/entrypoints/background/telemetry.ts` | new | ~40 lines |
-| `tests/v19/playwright-watchdog.test.ts` | new | ~120 lines |
-| `package.json` (`@playwright/test`) | new dep | devDependency |
-| `docs/wiki/v1.9-smoke-test-runbook.md` | new | manual runbook |
+| 文件                                                               | 类型    | 估计改动                                   |
+| ------------------------------------------------------------------ | ------- | ------------------------------------------ |
+| `app/chrome-extension/entrypoints/background/keepalive-manager.ts` | modify  | +50 lines (state machine + reconcileState) |
+| `app/chrome-extension/entrypoints/background/bridge-control.ts`    | modify  | +5 lines (call reconcileState on alarm)    |
+| `app/chrome-extension/entrypoints/background/telemetry.ts`         | new     | ~40 lines                                  |
+| `tests/v19/playwright-watchdog.test.ts`                            | new     | ~120 lines                                 |
+| `package.json` (`@playwright/test`)                                | new dep | devDependency                              |
+| `docs/wiki/v1.9-smoke-test-runbook.md`                             | new     | manual runbook                             |
 
 ## 7. 风险
 
-| 风险 | 缓解 |
-|---|---|
-| Playwright headless 不支持 extension | 必须 `headless: false`，CI matrix 加 `--with-display` |
-| 真实 Chrome version drift | Playwright `channel: 'chrome'` 用系统 Chrome stable，与 Codex 一致 |
-| Telemetry 噪音（用户日常使用波动） | buffer 100 entries + console.log + manual aggregation |
-| CI runner 时间 | 3 tests × 35s ≈ 2 分钟，OK |
-| keepalive-manager state machine 复杂度 | 先做简单版（offscreen-only），native-host/SW 后续 |
+| 风险                                   | 缓解                                                               |
+| -------------------------------------- | ------------------------------------------------------------------ |
+| Playwright headless 不支持 extension   | 必须 `headless: false`，CI matrix 加 `--with-display`              |
+| 真实 Chrome version drift              | Playwright `channel: 'chrome'` 用系统 Chrome stable，与 Codex 一致 |
+| Telemetry 噪音（用户日常使用波动）     | buffer 100 entries + console.log + manual aggregation              |
+| CI runner 时间                         | 3 tests × 35s ≈ 2 分钟，OK                                         |
+| keepalive-manager state machine 复杂度 | 先做简单版（offscreen-only），native-host/SW 后续                  |
 
 ## 8. Rollout
 

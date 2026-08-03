@@ -119,8 +119,8 @@ describe('RFC §7.2 - MCP session soft-degradation integration', () => {
       { liveTargets: ['3'], markHeartbeat: true },
       Date.now() - HEARTBEAT_STALE_MS - 10_000,
     );
-    observeHeartbeat('owner-A', Date.now() - 200_000);
-    observeHeartbeat('owner-B', Date.now() - 100_000);
+    observeHeartbeat('owner-A', Date.now() - HEARTBEAT_STALE_MS - 50_000);
+    observeHeartbeat('owner-B', Date.now() - HEARTBEAT_STALE_MS - 50_000);
 
     const result = await callTool(
       supertestAgent,
@@ -145,9 +145,9 @@ describe('RFC §7.2 - MCP session soft-degradation integration', () => {
     recordExtensionConnection(
       'test-ext-scenario-2',
       { liveTargets: ['3'], markHeartbeat: true },
-      Date.now() - 120_000,
+      Date.now() - HEARTBEAT_STALE_MS - 10_000,
     );
-    observeHeartbeat('owner-A', Date.now() - 200_000);
+    observeHeartbeat('owner-A', Date.now() - HEARTBEAT_STALE_MS - 50_000);
     observeHeartbeat('owner-B', Date.now() - 30_000);
 
     const result = await callTool(supertestAgent, sid, 'chrome_navigate', {
@@ -160,9 +160,10 @@ describe('RFC §7.2 - MCP session soft-degradation integration', () => {
     expect(payload.code).toBe('EXTENSION_STARTING');
     expect(payload.recoverable).toBe(true);
     expect(payload.toolName).toBe('chrome_navigate');
-    // retryAfterMs = 60000 - 30000 + 2000 = 32000 (with up to ~5s clock drift)
-    expect(payload.retryAfterMs).toBeGreaterThanOrEqual(31_500);
-    expect(payload.retryAfterMs).toBeLessThanOrEqual(32_000);
+    // retryAfterMs = max(1000, HEARTBEAT_INTERVAL_MS - reloadGapMs + 2000)
+    // HEARTBEAT_INTERVAL_MS=30000 (v1.8.2), reloadGapMs=30000, so = max(1000, 2000) = 2000
+    expect(payload.retryAfterMs).toBeGreaterThanOrEqual(1_000);
+    expect(payload.retryAfterMs).toBeLessThanOrEqual(2_000);
     expect(payload.reloadGapMs).toBeGreaterThanOrEqual(30_000);
     expect(payload.reloadGapMs).toBeLessThanOrEqual(30_005);
   });
