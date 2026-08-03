@@ -1,3 +1,20 @@
+## [v1.9.2] - 2026-08-03
+
+### Added
+
+- **CI build consistency check** (`.github/workflows/build-consistency.yml`). Runs on PR/push to `master`/`main`/`develop` that touches `app/chrome-extension/package.json` or `wxt.config.ts`. Runs `pnpm install --frozen-lockfile` + `pnpm build`, then asserts `manifest.version === package.json.version`. Fails the PR if mismatch with actionable error message ("bump package.json or amend commit + force push tag"). Prevents the bug where release tag v1.9.1 pointed to source code with `package.json` at 1.9.0 (no bump done in the original commit), leaving the user's Chrome extensions page showing stale 1.8.1 after `git checkout v1.9.1 && pnpm build`.
+- **Release runbook** (`docs/wiki/release-runbook.md`). Documents the three-layer version sync (git tag → package.json → manifest.json), the 5-step user flow (`git checkout` → `pnpm install` → `pnpm build` → verify → Chrome reload), common pitfalls table, and CI auto-check pointer. The canonical place future maintainers point new contributors to when "the extension still shows 1.8.1 after upgrade" comes up.
+- **Permanent CHANGELOG header** (above v1.9.1 entry). Bold "build reminder" callout at top of CHANGELOG pointing to release runbook + CI workflow. Any user scrolling changelog sees the reminder before reading the first entry.
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.1 → 1.9.2 (this release)
+
+### Notes
+
+- v1.9.2 is the **release tooling patch**: no production code change. The only "user-visible" effect is that the Chrome extensions page now shows 1.9.2 (instead of 1.9.1) after `git checkout v1.9.2 && pnpm build && reload`.
+- v1.9.1 was missing this bump — it lived in a state where source code matched v1.9.0 + tests (since v1.9.1 was test-only additions to v1.9.0 PR#1). v1.9.2 commits the version bump that should have been in v1.9.1.
+- For users currently on v1.9.0 source code: nothing actionable; v1.9.0 → v1.9.2 are tooling-only diffs.
 
 ## [v1.9.1] - 2026-08-03
 
@@ -7,7 +24,7 @@
   - chrome.alarms heartbeat fires at ~30s under real Chrome
   - MV3 SW idle freeze survival (60s no user interaction)
   - reconcileState recreates offscreen after force close
-  Run via `pnpm test:e2e` (added as npm script). Skips automatically when `.output/chrome-mv3` not built.
+    Run via `pnpm test:e2e` (added as npm script). Skips automatically when `.output/chrome-mv3` not built.
 - **Smoke test runbook (v1.9 RFC PR#3)** - `docs/wiki/v1.9.0-smoke-test-runbook.md` (3.5KB). 30-minute guide for users to collect `[telemetry]` console output in real Chrome and send to maintainer. Includes maintainer checklist (heartbeat count > 30, max gap < 90s, source distribution includes `alarm`, ownerId drift).
 
 ### Notes

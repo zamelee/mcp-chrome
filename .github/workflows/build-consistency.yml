@@ -1,0 +1,75 @@
+# name: Build Consistency Check
+#
+# Validates that the Chrome extension manifest version (built artifact) matches
+# the package.json version (source of truth). Without this check, a release
+# tag can point to a commit whose source code is bumped to 1.9.1 but whose
+# local .output/chrome-mv3/manifest.json still shows 1.8.1 (gitignored, only
+# updated by `pnpm build` on the user's machine). The user sees "1.8.1" in
+# the Chrome extensions page and assumes the tag is wrong.
+#
+# This job runs `pnpm build`, then asserts:
+#   manifest.version === package.json.version
+# Fail = PR blocked, user notified to bump version or amend commit.
+
+on:
+  pull_request:
+    branches: [ master, main, develop ]
+    paths:
+      - 'app/chrome-extension/package.json'
+      - 'app/chrome-extension/wxt.config.ts'
+      - 'app/chrome-extension/.github/workflows/build-consistency.yml'
+  push:
+    branches: [ master, main, develop ]
+    paths:
+      - 'app/chrome-extension/package.json'
+
+jobs:
+  build-consistency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: |
+          cd app/chrome-extension
+          pnpm install --frozen-lockfile
+
+      - name: Build extension
+        run: |
+          cd app/chrome-extension
+          pnpm build
+
+      - name: Verify manifest.version matches package.json version
+        run: |
+          cd app/chrome-extension
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          MANIFEST_VERSION=$(node -p "require('./.output/chrome-mv3/manifest.json').version")
+          echo "package.json version: $PKG_VERSION"
+          echo "manifest.json version: $MANIFEST_VERSION"
+          if [ "$PKG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::Version mismatch! package.json=$PKG_VERSION but manifest.json=$MANIFEST_VERSION"
+            echo "::error::Either bump package.json before commit, or run 'pnpm build' locally and amend the commit."
+            exit 1
+          fi
+          echo "OK: version sync verified"
+
+      - name: Upload build artifact (for local inspection)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-mv3-on-failure
+          path: app/chrome-extension/.output/chrome-mv3/manifest.json
+          retention-days: 7
