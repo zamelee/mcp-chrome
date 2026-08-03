@@ -22,10 +22,28 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // Native-side HEARTBEAT_STALE_MS = 150s gives 5x jitter tolerance (R2 ChatGPT
 // math: 70s alarm + 5s SW cold start + 5s network + 1s bridge + 69s margin).
 const HEARTBEAT_ALARM_NAME = 'bridge-heartbeat';
+const lastHeartbeatAtBySource: Map<HeartbeatSource, number> = new Map();
+function recordHeartbeat(source: HeartbeatSource): void {
+  const now = Date.now();
+  const scheduledAt = lastHeartbeatAtBySource.get(source) ?? now;
+  lastHeartbeatAtBySource.set(source, now);
+  const ownerId = getV3Runtime()?.ownerId ?? null;
+  recordHeartbeatTelemetry({
+    type: 'heartbeat',
+    source,
+    scheduledAt,
+    firedAt: now,
+    delayMs: now - scheduledAt,
+    ownerId,
+    isStale: false, // set by runPreflight at bridge side; tracked here for completeness
+  });
+}
 
 // v1.8+ soft degradation (RFC §6.1.4): include ownerId in heartbeat body
 // so bridge can detect SW reload events.
 import { getV3Runtime } from './record-replay-v3/bootstrap';
+import { recordHeartbeatTelemetry, type HeartbeatSource } from './telemetry';
+import { reconcileState } from './keepalive-manager';
 
 type BridgeHealth = {
   bridgeInstanceId: string;
@@ -104,7 +122,8 @@ async function doRegister(): Promise<BridgeHealth | null> {
   return ack;
 }
 
-async function doHeartbeat(): Promise<void> {
+async function doHeartbeat(source: HeartbeatSource = 'manual'): Promise<void> {
+  recordHeartbeat(source);
   const liveTargets = await fetchLiveTargets();
   const ack = await postJson(HEARTBEAT_PATH, {
     extensionId: state.extensionId,
@@ -148,9 +167,9 @@ function stopHeartbeat(): void {
 // chrome.tabs.* listeners accumulate across calls -- addListener without
 // removeListener would compound if startHeartbeat is called repeatedly.
 // Attach-once + active-flag-check is the safest pattern.
-function triggerImmediateHeartbeatIfActive(): void {
+function triggerImmediateHeartbeatIfActive(source: HeartbeatSource = 'chrome.tabs'): void {
   if (!state.timer) return; // heartbeat not active, skip
-  void doHeartbeat();
+  void doHeartbeat(source);
 }
 
 chrome.tabs.onCreated.addListener(triggerImmediateHeartbeatIfActive);
@@ -162,7 +181,7 @@ chrome.tabs.onReplaced.addListener(triggerImmediateHeartbeatIfActive); // preren
 function startHeartbeat(): void {
   stopHeartbeat();
   state.timer = setInterval(() => {
-    void doHeartbeat();
+    void doHeartbeat('setInterval');
   }, HEARTBEAT_INTERVAL_MS);
   // No .unref() in MV3 service workers — keep the timer alive.
 
@@ -182,7 +201,11 @@ function startHeartbeat(): void {
 // heartbeat loop has been stopped via onBridgeStopped().
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== HEARTBEAT_ALARM_NAME) return;
-  triggerImmediateHeartbeatIfActive();
+  if (!state.timer) return; // heartbeat not active (already gated by triggerImmediateHeartbeatIfActive)
+  // v1.9: reconcile runtime health (offscreen/native) before heartbeat.
+  // Self-healing happens here, not in heartbeat path.
+  reconcileState().catch((e) => console.warn('[bridge-control] reconcileState failed:', e));
+  void doHeartbeat('alarm');
 });
 
 /**

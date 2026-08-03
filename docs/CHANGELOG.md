@@ -1,3 +1,24 @@
+
+## [v1.9.0] - 2026-08-03
+
+### Added
+
+- **keepalive-manager.ts reconcileState() (NORMAL/DEGRADED/RECOVERING state machine)** - v1.9 PR#1 covers the offscreen-document self-heal scenario per ChatGPT R2 §Testing-strategy (RFC `docs/rfcs/2026-08-03-v19-keepalive-reconcile-playwright-smoke.md`). Each `chrome.alarms` heartbeat trigger now also calls `reconcileState()` before `doHeartbeat()`. If `chrome.offscreen.hasDocument()` returns false (Chrome memory pressure reaped the offscreen doc), reconcileState returns `{kind: 'recovering', action: 'createOffscreen'}` and logs to console. Native-host reconnect is deferred to v1.10 (out of v1.9 PR#1 scope; would require native-bridge protocol change).
+- **telemetry.ts heartbeat event collector** - Records `{type, source, scheduledAt, firedAt, delayMs, ownerId, isStale}` per heartbeat. Source = `setInterval` | `alarm` | `chrome.tabs` | `manual`. Outputs single-line JSON via `console.log('[telemetry] ...')` for grep / parsing. 200-entry rolling buffer (test-only `_resetTelemetryBufferForTests()`). Per AGENTS.md §0b.7.7 zero-disk default: telemetry is console-only, no local persistence. Future v1.10 may auto-upload to GitHub Issues.
+- **`bridge-control.ts` source attribution** - `doHeartbeat()` now takes a `HeartbeatSource` arg; setInterval path uses `setInterval`, chrome.alarms path uses `alarm`, chrome.tabs.* listener uses `chrome.tabs`. Each call writes one telemetry entry.
+- **`vitest.setup.ts` chrome.offscreen mock** - `hasDocument` / `createDocument` / `closeDocument` / `Reason` enum. Default `hasDocument()` returns `true`; tests override per case.
+
+### Tests
+
+- New: `app/chrome-extension/tests/background/keepalive-manager.test.ts` (5 tests). Covers normal state, recovering state on missing offscreen, bounded history (50 entries), last-health snapshot, hasDocument-throws-treated-as-missing path.
+- `tests/background/bridge-control.test.ts` (3 tests, unchanged) — still passes, now also emits telemetry lines.
+
+### Notes
+
+- This is v1.9 **PR#1 only**: keepalive-manager + telemetry. v1.9 PR#2 (Playwright integration test) and PR#3 (smoke runbook) are separate.
+- 505/505 chrome-extension tests pass; native-server tests unchanged from v1.8.3 (107/107).
+- No production wire-up changes — only adds defensive self-heal in background SW.
+
 ## [v1.8.2] - 2026-08-02
 
 ### Added
