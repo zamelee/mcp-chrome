@@ -55,3 +55,13 @@ reasonix.toml
 
 # Release artifacts (use GitHub Releases instead)
 releases/
+
+# Project scratch space (per-session debug scripts, throwaway tests)
+tmp/
+
+# Per-account AI conversation cache (per AGENTS.md §0c.1, managed separately)
+docs/ai-conversations/
+
+# Python bytecode cache (auto-generated)
+tools/__pycache__/
+*.pyc
