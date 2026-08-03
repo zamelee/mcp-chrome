@@ -1,4 +1,20 @@
 
+## [v1.9.1] - 2026-08-03
+
+### Added
+
+- **Playwright integration tests (v1.9 RFC PR#2)** - `app/chrome-extension/tests/e2e/watchdog.spec.ts` (3 tests) + `app/chrome-extension/playwright.config.ts`. Tests use `launchPersistentContext` with `channel: 'chrome'` (system Chrome stable) and `--load-extension` to load mcp-chrome unpacked. Verifies:
+  - chrome.alarms heartbeat fires at ~30s under real Chrome
+  - MV3 SW idle freeze survival (60s no user interaction)
+  - reconcileState recreates offscreen after force close
+  Run via `pnpm test:e2e` (added as npm script). Skips automatically when `.output/chrome-mv3` not built.
+- **Smoke test runbook (v1.9 RFC PR#3)** - `docs/wiki/v1.9.0-smoke-test-runbook.md` (3.5KB). 30-minute guide for users to collect `[telemetry]` console output in real Chrome and send to maintainer. Includes maintainer checklist (heartbeat count > 30, max gap < 90s, source distribution includes `alarm`, ownerId drift).
+
+### Notes
+
+- v1.9.1 is the test-infra + docs followup to v1.9.0 (PR#1 keepalive reconcile + telemetry). No production code changes.
+- 505/505 vitest unit tests still pass; Playwright e2e tests are separate (run via `pnpm test:e2e`).
+
 ## [v1.9.0] - 2026-08-03
 
 ### Added

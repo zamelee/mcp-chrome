@@ -3,7 +3,7 @@
   "description": "a chrome extension to use your own chrome as a mcp server",
   "author": "hangye",
   "private": true,
-  "version": "1.9.0",
+  "version": "1.9.1",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -20,7 +20,9 @@
     "format": "npx prettier --write .",
     "format:check": "npx prettier --check .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@ethanwilkins/chrome-mcp-shared-2026": "workspace:*",
@@ -52,6 +54,7 @@
     "vite-plugin-static-copy": "^3.0.0",
     "vitest": "^2.1.8",
     "vue-tsc": "^2.2.8",
-    "wxt": "^0.20.0"
+    "wxt": "^0.20.0",
+    "@playwright/test": "^1.49.0"
   }
 }
