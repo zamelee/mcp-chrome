@@ -1,3 +1,47 @@
+## [v1.9.4] - 2026-08-03
+
+### Fixed
+
+- **Cherry-pick v1.9.2 (519bb9e) governance infra back onto work/zamelee-bootstrap**: the v1.9.3 fix commit (a27c5fa) was branched directly from v1.9.1 (758c7cf), bypassing v1.9.2 (519bb9e). This meant the CI build-consistency check + release runbook + CHANGELOG header that v1.9.2 added were missing from work/zamelee-bootstrap history, which is exactly the governance gap that allowed "Chrome extensions page still shows 1.8.1 after upgrade" to recur on every release. This commit cherry-picks 519bb9e and bumps `app/chrome-extension/package.json` 1.9.3 → 1.9.4. After `git checkout v1.9.4 && pnpm build`, the Chrome extensions page will show 1.9.4 (and stay in sync going forward via the CI workflow).
+
+### Why a new minor (v1.9.4) instead of amending v1.9.3
+
+- v1.9.3 (a27c5fa) was already pushed + tagged (v1.9.3) + force-pushed to `origin/work/zamelee-bootstrap`. Amending it would break the published tag + any downstream consumer that already pulled v1.9.3.
+- The bridge running in production is v1.9.3 protocol (HTTP 200 + SESSION_NOT_FOUND CallToolResult). Cherry-picking v1.9.2 governance infra is a backward-compatible additive: the new files (`.github/workflows/build-consistency.yml`, `docs/wiki/release-runbook.md`) have no runtime impact on bridge / extension behavior. tag v1.9.4 reflects this honestly.
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.3 → 1.9.4 (this release)
+
+### Tests
+
+- 107/107 native-server pass (v1.9.3 fix unchanged)
+- 505/505 chrome-extension pass (v1.9.3 fix unchanged)
+- New file: `.github/workflows/build-consistency.yml` (75 lines, cherry-picked from 519bb9e) — prevents future 3-layer version drift at PR time
+- New file: `docs/wiki/release-runbook.md` (129 lines, cherry-picked from 519bb9e) — canonical 5-step user flow + common pitfalls table
+
+### Notes
+
+- For users currently on v1.9.3: nothing actionable. The bridge protocol is unchanged. v1.9.4 is governance-only: it just ensures your future upgrade won't show a stale version on the Chrome extensions page.
+- The .output/chrome-mv3/manifest.json should read "version": "1.9.4" after `pnpm build` from this commit. Verify via `node -e "console.log(require('./app/chrome-extension/.output/chrome-mv3/manifest.json').version)"`.
+
+### Fixed
+
+- **HTTP POST /mcp on stale sessionId: HTTP 400 → HTTP 200 + SESSION_NOT_FOUND CallToolResult** (RFC `docs/rfcs/2026-08-02-mcp-session-soft-degradation.md` §5.3 spec compliance). Previously, server/index.ts POST handler returned HTTP 400 `{error: "Invalid MCP request or session"}` when `request.headers['mcp-session-id']` did not match any active transport. This pre-empted the v1.8.1 soft-degradation protocol: the JSON-RPC `error` envelope never reached the client, so Codex desktop MCP client could not read `_meta.recommendation='re_initialize'` to recover. Fix: stale-sessionId path now returns HTTP 200 + JSON-RPC `result` with `{content: [{type: "text", text: "{code:'SESSION_NOT_FOUND', recommendation:'re_initialize', ...}"}], isError: true, _meta: {sessionStatus: 'stale_recovered', recommendation: 're_initialize'}}`. Clients that respect MCP JSON-RPC envelope semantics can now re_initialize cleanly instead of looping on 400.
+- **Pre-existing TS error in session-meta.ts**: `computeLiveTargetsSyncLag(conn, reloadContext, nowMs)` was called with 3 args but function signature is 2-arg (per RFC §5.2 phase 1a review). Removed nowMs arg. Required fixing before `tsc --noEmit` would pass.
+- `app/native-server/package.json`: 1.8.2 → 1.9.3 (version sync)
+- `app/chrome-extension/package.json`: 1.9.1 → 1.9.3 (version sync)
+
+### Tests
+
+- integration.test.ts: 4/4 pass (Scenario 1+2+3 + Sanity).
+- Total: 107/107 native-server + 505/505 chrome-extension pass.
+
+### Notes
+
+- v1.9.3 is a direct fix for the bug visible in user-facing sessions: mcp-chrome HTTP variant would return 400 "Invalid MCP request or session" on every call after extension reload because Codex client keeps the stale sessionId. v1.9.3 makes the response shape RFC-compliant so clients can re_initialize.
+- Per AGENTS.md §0b.7.8 v1.8.1 + v1.8.1 RFC §5.3, the SESSION_NOT_FOUND response should be HTTP 200 + CallToolResult with _meta. This commit implements that spec.
+
 ## [v1.9.3] - 2026-08-03
 
 ### Fixed
@@ -17,7 +61,24 @@
 - v1.9.3 is a direct fix for the bug visible in user-facing sessions: mcp-chrome HTTP variant would return 400 "Invalid MCP request or session" on every call after extension reload because Codex client keeps the stale sessionId. v1.9.3 makes the response shape RFC-compliant so clients can re_initialize.
 - Per AGENTS.md §0b.7.8 v1.8.1 + v1.8.1 RFC §5.3, the SESSION_NOT_FOUND response should be HTTP 200 + CallToolResult with _meta. This commit implements that spec.
 
+=======
+
 ## [v1.9.2] - 2026-08-03
+
+### Added
+
+- **CI build consistency check** (`.github/workflows/build-consistency.yml`). Runs on PR/push to `master`/`main`/`develop` that touches `app/chrome-extension/package.json` or `wxt.config.ts`. Runs `pnpm install --frozen-lockfile` + `pnpm build`, then asserts `manifest.version === package.json.version`. Fails the PR if mismatch with actionable error message ("bump package.json or amend commit + force push tag"). Prevents the bug where release tag v1.9.1 pointed to source code with `package.json` at 1.9.0 (no bump done in the original commit), leaving the user's Chrome extensions page showing stale 1.8.1 after `git checkout v1.9.1 && pnpm build`.
+- **Release runbook** (`docs/wiki/release-runbook.md`). Documents the three-layer version sync (git tag → package.json → manifest.json), the 5-step user flow (`git checkout` → `pnpm install` → `pnpm build` → verify → Chrome reload), common pitfalls table, and CI auto-check pointer.
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.1 → 1.9.2 (this release)
+
+### Notes
+
+- v1.9.2 is the **release tooling patch**: no production code change.
+
+## [v1.9.1] - 2026-08-03
 
 ### Added
 
@@ -34,8 +95,6 @@
 - v1.9.2 is the **release tooling patch**: no production code change. The only "user-visible" effect is that the Chrome extensions page now shows 1.9.2 (instead of 1.9.1) after `git checkout v1.9.2 && pnpm build && reload`.
 - v1.9.1 was missing this bump — it lived in a state where source code matched v1.9.0 + tests (since v1.9.1 was test-only additions to v1.9.0 PR#1). v1.9.2 commits the version bump that should have been in v1.9.1.
 - For users currently on v1.9.0 source code: nothing actionable; v1.9.0 → v1.9.2 are tooling-only diffs.
-
-## [v1.9.1] - 2026-08-03
 
 ### Added
 
