@@ -13,6 +13,8 @@ interface FileUploadToolParams {
   multiple?: boolean; // Whether to allow multiple files
   tabId?: number; // Target existing tab id
   windowId?: number; // When no tabId, pick active tab from this window
+  /** v1.9.5: postcondition probe to distinguish 'uploaded-but-rejected' from 'uploaded-with-stale-toast'. */
+  verifyPostcondition?: boolean;
 }
 
 /**
@@ -29,7 +31,15 @@ class FileUploadTool extends BaseBrowserToolExecutor {
    * Execute file upload operation using Chrome DevTools Protocol
    */
   async execute(args: FileUploadToolParams): Promise<ToolResult> {
-    const { selector, filePath, fileUrl, base64Data, fileName, multiple = false } = args;
+    const {
+      selector,
+      filePath,
+      fileUrl,
+      base64Data,
+      fileName,
+      multiple = false,
+      verifyPostcondition = true,
+    } = args;
 
     console.log(`Starting file upload operation with options:`, args);
 
@@ -136,6 +146,13 @@ class FileUploadTool extends BaseBrowserToolExecutor {
         });
       });
 
+      // Postcondition verification (v1.9.5): probe DOM after upload to distinguish
+      // 'uploaded-but-rejected' from 'uploaded-with-stale-toast'. Best-effort:
+      // probe failure does not fail the upload call itself.
+      const postcondition = verifyPostcondition
+        ? await this._verifyUploadPostcondition(tabId, selector, files, cdpSessionManager)
+        : { status: 'skipped' };
+
       return {
         content: [
           {
@@ -146,6 +163,7 @@ class FileUploadTool extends BaseBrowserToolExecutor {
               files: files,
               selector: selector,
               fileCount: files.length,
+              postcondition,
             }),
           },
         ],
@@ -163,6 +181,121 @@ class FileUploadTool extends BaseBrowserToolExecutor {
   }
 
   // All debugger attach/detach is centrally managed by cdpSessionManager
+
+  /**
+   * Postcondition verification after chrome_upload_file (v1.9.5).
+   *
+   * Distinguishes three states so agents do not confuse prior uploads'
+   * stale error toast with the new upload's actual rejection (bug
+   * observed on chatgpt.com silent dedup and github.com/copilot
+   * CJK+markdown rejection).
+   */
+  private async _verifyUploadPostcondition(
+    tabId: number,
+    selector: string,
+    expectedFiles: string[],
+    cdp: typeof cdpSessionManager,
+  ): Promise<{
+    status: 'succeeded' | 'rejected' | 'uncertain' | 'probe_failed';
+    fileInputFiles?: string[];
+    chipTexts?: string[];
+    newErrors?: string[];
+    reason?: string;
+  }> {
+    const expected = expectedFiles.map((f) => {
+      const parts = String(f).split(/[/\\\\]/);
+      return parts[parts.length - 1] || String(f);
+    });
+    const selectorSafe = String(selector).replace(/'/g, "\\\\'");
+    const probeExpression = `
+      (function() {
+        const el = document.querySelector('${selectorSafe}');
+        const files = el && el.files ? Array.from(el.files).map(f => f.name) : [];
+        const chipSelectors = ['[class*="attachment"]','[class*="Chip"]','[class*="chip"]','[data-testid*="attachment"]','[role="listitem"]','li'];
+        const chips = new Set();
+        for (const sel of chipSelectors) {
+          document.querySelectorAll(sel).forEach(n => {
+            if (n.offsetParent === null) return;
+            const t = (n.textContent || '').trim();
+            if (t.length > 0 && t.length < 300) chips.add(t);
+          });
+        }
+        const errSelectors = ['[role="alert"]','[class*="error"]','[class*="Error"]','[class*="toast"]','[class*="Toast"]','[class*="banner"]'];
+        const errs = new Set();
+        for (const sel of errSelectors) {
+          document.querySelectorAll(sel).forEach(n => {
+            if (n.offsetParent === null) return;
+            const t = (n.textContent || '').trim();
+            if (t.length > 5 && t.length < 500) errs.add(t);
+          });
+        }
+        return JSON.stringify({ fileInputFiles: files, chips: Array.from(chips), errors: Array.from(errs) });
+      })()
+    `;
+    try {
+      const evalResult = (await cdp.sendCommand(tabId, 'Runtime.evaluate', {
+        expression: probeExpression,
+        returnByValue: true,
+      })) as { result?: { value?: string } };
+      const value = evalResult?.result?.value;
+      if (typeof value !== 'string') {
+        return { status: 'probe_failed', reason: 'probe returned non-string' };
+      }
+      let parsed: { fileInputFiles: string[]; chips: string[]; errors: string[] };
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        return { status: 'probe_failed', reason: 'JSON parse failed' };
+      }
+      const fileInputFiles = Array.isArray(parsed.fileInputFiles) ? parsed.fileInputFiles : [];
+      const chipTexts = Array.isArray(parsed.chips) ? parsed.chips : [];
+      const newErrors = Array.isArray(parsed.errors) ? parsed.errors : [];
+      const allMatched = expected.length > 0 && expected.every((n) => fileInputFiles.includes(n));
+      const chipMatched =
+        expected.length === 0 || expected.some((n) => chipTexts.some((c) => c.includes(n)));
+      const errorsMentionFile = newErrors.filter((e) => expected.some((n) => e.includes(n)));
+      const errorsGeneric = newErrors.filter((e) =>
+        /unsupported|invalid|reject|fail|error/i.test(e),
+      );
+      if (!allMatched) {
+        return {
+          status: 'uncertain',
+          fileInputFiles,
+          chipTexts: chipTexts.slice(0, 5),
+          newErrors: newErrors.slice(0, 5),
+          reason: 'file input did not reflect expected files',
+        };
+      }
+      if (errorsMentionFile.length > 0) {
+        return {
+          status: 'rejected',
+          fileInputFiles,
+          chipTexts: chipTexts.slice(0, 5),
+          newErrors: errorsMentionFile.slice(0, 5),
+          reason: 'page error references uploaded filename',
+        };
+      }
+      if (chipMatched && errorsGeneric.length === 0) {
+        return {
+          status: 'succeeded',
+          fileInputFiles,
+          chipTexts: chipTexts.slice(0, 5),
+          newErrors: [],
+        };
+      }
+      return {
+        status: 'uncertain',
+        fileInputFiles,
+        chipTexts: chipTexts.slice(0, 5),
+        newErrors: newErrors.slice(0, 5),
+        reason: chipMatched
+          ? 'chip visible but generic errors also visible (may be stale)'
+          : 'no chip detected (upload may be in-flight or backend rejected silently)',
+      };
+    } catch (e) {
+      return { status: 'probe_failed', reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
 
   /**
    * Prepare file from URL or base64 data using native messaging host

@@ -22,6 +22,7 @@ export { readPageTool } from './read-page';
 export { computerTool } from './computer';
 export { handleDialogTool } from './dialog';
 export { handleDownloadTool } from './download';
+export { saveTextTool } from './save-text'; // v1.9.5
 export { userscriptTool } from './userscript';
 export {
   performanceStartTraceTool,

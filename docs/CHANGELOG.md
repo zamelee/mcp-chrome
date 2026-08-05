@@ -1,3 +1,27 @@
+## [v1.9.5] - 2026-08-05
+
+### Fixed
+
+- **chrome_upload_file postcondition probe (bug A)**: after CDP `setFileInputFiles`, the tool now probes the page DOM and returns `{ postcondition: { status, fileInputFiles, chipTexts, newErrors, reason } }` instead of just `{success: true}`. Distinguishes 3 states: `succeeded` (file input reflects uploaded files AND visible chips AND no errors), `rejected` (visible error references uploaded filename), `uncertain` (mixed signals). Solves the bug where agents on chatgpt.com (silent dedup) and github.com/copilot (CJK+markdown rejection with stale toast) couldn't tell whether their upload succeeded. `verifyPostcondition: false` opt-out for performance.
+- **chrome_save_text tool (bug B)**: new MCP tool `chrome_save_text({ text, filePath, mimeType? })` that writes text content to disk via native-host atomic write-rename (same path as `chrome_screenshot savePath`). Bypasses Chrome download API entirely — no Save As dialog. Replaces the broken `Blob + a.click()` pattern that triggered the browser download UI (实测 2026-08-05 github copilot 抓全文时弹 Save As 弹窗).
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.4 -> 1.9.5
+- `app/native-server/package.json`: 1.9.3 -> 1.9.5
+- `packages/shared/package.json`: 1.8.1 -> 1.9.5
+- `package.json`: 1.9.4 -> 1.9.5 (root, governance infra)
+
+### Tests
+
+- native-server: 107/107 pass (unchanged)
+- chrome-extension: 505/505 pass (unchanged)
+
+### Notes
+
+- For users: nothing actionable for v1.9.5. These are quality-of-life fixes for agent reliability (the agent now sees upload status correctly and can save page content without annoying Save As dialogs). The MCP protocol is unchanged.
+- For agent guidance: `~/.codex/AGENTS.md` §0b.7.7 + §0b.7.8 v1.9.5 entries added documenting the new probe behavior + the save_text tool + the explicit ban on Blob+click in page context.
+
 ## [v1.9.4] - 2026-08-03
 
 ### Fixed

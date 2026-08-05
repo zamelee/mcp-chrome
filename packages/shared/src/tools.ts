@@ -499,7 +499,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         savePath: {
           type: 'string',
           description:
-              'Absolute filesystem path. When set, writes the PNG via native host fs.writeFileSync + atomic rename (per AGENTS.md §0b.7.7 F-ScreenshotSavePath). Returns {filePath, size}. Bypasses chrome.downloads entirely. Default (no savePath): zero disk writes, returns base64 only.',
+            'Absolute filesystem path. When set, writes the PNG via native host fs.writeFileSync + atomic rename (per AGENTS.md §0b.7.7 F-ScreenshotSavePath). Returns {filePath, size}. Bypasses chrome.downloads entirely. Default (no savePath): zero disk writes, returns base64 only.',
         },
       },
       required: [],
@@ -1219,6 +1219,12 @@ export const TOOL_SCHEMAS: Tool[] = [
         multiple: {
           type: 'boolean',
           description: 'Whether the input accepts multiple files (default: false)',
+        },
+        verifyPostcondition: {
+          type: 'boolean',
+          description:
+            'Probe DOM after CDP setFileInputFiles to distinguish uploaded-but-rejected from uploaded-with-stale-toast. Returns postcondition block in result (v1.9.5). Default true.',
+          default: true,
         },
       },
       required: ['selector'],
