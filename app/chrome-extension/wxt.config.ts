@@ -169,20 +169,26 @@ export default defineConfig({
           // Vite plugin will watch src patterns and re-copy on change
         } as any,
       }) as any,
-      // v1.9.6: Strip modulepreload links from offscreen.html to avoid CORS
-      // preflight failures on chrome-extension:// URLs. Offscreen documents
-      // initialize lazily and do not benefit from preloading anyway.
+      // v1.9.8: Strip <link rel="modulepreload" crossorigin> from EVERY extension
+      // HTML entry. Vite emits modulepreload for every ESM chunk, but Chrome treats
+      // chrome-extension:// as a cross-world origin and rejects the preload with
+      // "cross-world extension resource mismatch" (or marks it unused after a few
+      // seconds). Preload never worked in the extension world anyway, so stripping
+      // is lossless: kills the Console warnings and slightly speeds up first paint.
+      //
+      // v1.9.7 originally only targeted offscreen.html; that was too narrow -- the
+      // same warning fires on welcome.html / popup.html / options.html / sidepanel.html.
+      //
+      // transformIndexHtml runs at build time on each emitted HTML, so this affects
+      // both dev (.wxt) and production (.output) bundles.
       {
-        name: 'mcp-chrome-strip-offscreen-preload',
+        name: 'mcp-chrome-strip-modulepreload',
         transformIndexHtml: {
           order: 'post',
           handler(html, ctx) {
-            const isOffscreen =
-              ctx.filename &&
-              (ctx.filename.endsWith('offscreen.html') ||
-                ctx.filename.endsWith('offscreen\\index.html') ||
-                ctx.filename.endsWith('offscreen/index.html'));
-            if (isOffscreen) {
+            // Match every HTML entry the extension build emits.
+            const isExtensionHtml = ctx.filename && /\.html$/.test(ctx.filename);
+            if (isExtensionHtml) {
               return html.replace(/<link rel="modulepreload"[^>]*>\s*\n?/g, '');
             }
             return html;

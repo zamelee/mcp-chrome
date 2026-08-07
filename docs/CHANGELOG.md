@@ -1,3 +1,36 @@
+## [v1.9.8] - 2026-08-07
+
+### Fixed
+
+- **Extend modulepreload strip from offscreen.html to ALL extension HTML entries** (v1.9.7 was too narrow). Same root cause as v1.9.7 but spans the full extension surface.
+
+  痛点: v1.9.7 only matched `offscreen.html`, so `welcome.html` / `popup.html` / `options.html` / `sidepanel.html` / `builder.html` still emitted `<link rel="modulepreload" crossorigin>` in the HTML and still produced Console warnings:
+  - `A preload for ... is found, but it is not used because it is a cross-world extension resource mismatch.`
+  - `The resource ... was preloaded using link preload but not used within a few seconds from the windows load event.`
+
+  修法: `app/chrome-extension/wxt.config.ts` 把 `mcp-chrome-strip-offscreen-preload` 改名 + 范围扩成 `mcp-chrome-strip-modulepreload`,`transformIndexHtml` 现在对每个 `.html` 结尾的 entry 都剥离 `<link rel="modulepreload">`。plugin name 改了,scope 从 `endsWith('offscreen.html')` 改成 `/\.html$/.test(filename)`,off-screen 这一个特化条件不再存在。
+
+  影响范围: 全部 6 个 HTML 入口 (builder / offscreen / options / popup / sidepanel / welcome) — 验证后 0 个 modulepreload link 残留。Plugin 仍在 Vite `transformIndexHtml.order='post'` 钩子里跑,build-time transform,无 runtime 影响。
+
+  设计哲学: chrome-extension:// origin 里 preload 永远不 work(Chrome 视为 cross-world 拒 CORS preflight),剥了没损失 — 既清掉 Console warning,也微减首屏 probe 时间。
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.7 -> 1.9.8
+- `app/native-server/package.json`: 1.9.7 -> 1.9.8
+- `packages/shared/package.json`: 1.9.7 -> 1.9.8
+- `package.json`: 1.9.7 -> 1.9.8 (governance infra)
+
+### Tests
+
+- chrome-extension: **505/505** pass (无新增 — plugin 改动是 build-time transform,通过 build output 验证)
+
+### Notes
+
+- 验证方法: `cd app/chrome-extension && pnpm build` 后 `python tmp/_check_html.py`,期望 6/6 HTML 全部 OK / 0 modulepreload。Chrome reload extension 后,F12 -> Console 不再出现 `cross-world extension resource mismatch` / `preloaded using link preload but not used within a few seconds` 这两类 warning(无论哪个 HTML 入口)。
+- v1.9.7 entry 保留原状 — v1.9.8 是 superset(v1.9.7 只剥 offscreen,v1.9.8 剥全部);v1.9.7 entry 不 amend,仍描述它当时的 scope。两者合并效果 = 全部 HTML 都剥。
+- 后续任何 Vite plugin 改动都要 4 个 package.json + manifest 一起 bump;manifest 由 build 自动从 package.json 读,所以仅 bump 4 个 package.json + clean rebuild 即可。
+
 ## [v1.9.7] - 2026-08-07
 
 ### Fixed
