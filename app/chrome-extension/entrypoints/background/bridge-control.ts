@@ -44,6 +44,7 @@ function recordHeartbeat(source: HeartbeatSource): void {
 import { getV3Runtime } from './record-replay-v3/bootstrap';
 import { recordHeartbeatTelemetry, type HeartbeatSource } from './telemetry';
 import { reconcileState } from './keepalive-manager';
+import { setIconState as setToolbarIcon, clearIconState as clearToolbarIcon, flushIconState as flushToolbarIcon } from './icon-manager';
 
 type BridgeHealth = {
   bridgeInstanceId: string;
@@ -217,6 +218,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 export async function onBridgeStarted(port: number): Promise<void> {
   if (state.port === port && state.timer) return;
   state.port = port;
+  setToolbarIcon('READY');  // v1.10.2: bridge alive -> toolbar READY
   state.extensionId = chrome.runtime?.id ?? state.extensionId;
   state.version = chrome.runtime?.getManifest?.()?.version ?? state.version;
 
@@ -249,6 +251,10 @@ export async function onBridgeStarted(port: number): Promise<void> {
 export function onBridgeStopped(): void {
   stopHeartbeat();
   state.port = null;
+  clearToolbarIcon('READY');
+  clearToolbarIcon('BUSY');
+  setToolbarIcon('DISCONNECTED_AUTO');  // v1.10.2: bridge gone
+  flushToolbarIcon();
 }
 
 /**

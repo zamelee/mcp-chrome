@@ -3,6 +3,7 @@ import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import { NATIVE_HOST, STORAGE_KEYS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '@/common/constants';
 import { handleCallTool } from './tools';
 import { recordMessage as monitorRecord } from './monitor';
+import { setIconState as setToolbarIcon, clearIconState as clearToolbarIcon, flushIconState as flushToolbarIcon } from './icon-manager';
 import { getFlow, listFlows } from './record-replay-v3/public-api';
 import { acquireKeepalive } from './keepalive-manager';
 import { onBridgeStarted, onBridgeStopped } from './bridge-control';
@@ -454,6 +455,8 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
         console.log(SUCCESS_MESSAGES.SERVER_STOPPED);
       } else if (message.type === NativeMessageType.ERROR_FROM_NATIVE_HOST) {
         console.error('Error from native host:', message.payload?.message || 'Unknown error');
+        // v1.10.2: surface error in toolbar badge.
+        setToolbarIcon('ERROR');
       } else if (message.type === 'file_operation_response') {
         // Forward file operation response back to the requesting tool
         // v1.10.1: record broadcast in monitor before sending.
@@ -611,11 +614,18 @@ export const initNativeHostListener = () => {
     monitorRecord({ layer: 'popup', direction: 'in', type: message?.type ?? '<unknown>', payload: message });
     // Allow UI to call tools directly
     if (message && message.type === 'call_tool' && message.name) {
-      handleCallTool({ name: message.name, args: message.args })
-        .then((res) => sendResponse({ success: true, result: res }))
-        .catch((err) =>
-          sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) }),
-        );
+      // v1.10.2: mark toolbar BUSY during tool execution, ERROR on failure.
+      setToolbarIcon('BUSY');
+      const handleResult = (res: unknown) => {
+        clearToolbarIcon('BUSY');
+        sendResponse({ success: true, result: res });
+      };
+      const handleError = (err: unknown) => {
+        clearToolbarIcon('BUSY');
+        setToolbarIcon('ERROR');
+        sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+      };
+      handleCallTool({ name: message.name, args: message.args }).then(handleResult).catch(handleError);
       return true;
     }
 

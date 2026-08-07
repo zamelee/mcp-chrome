@@ -67,6 +67,14 @@ export default defineConfig({
     action: {
       default_popup: 'popup.html',
       default_title: '猫娘 Chrome MCP',
+      // v1.10.2: pre-build icon set under public/icons/ready/ for default state.
+      // Other 7 states are swapped at runtime by icon-manager.ts via
+      // chrome.action.setIcon({ path: { 16, 32, 48 } }).
+      default_icon: {
+        16: '/icons/ready/16.png',
+        32: '/icons/ready/32.png',
+        48: '/icons/ready/48.png',
+      },
     },
     // Chrome Side Panel entry for workflow management
     // Ref: https://developer.chrome.com/docs/extensions/reference/api/sidePanel

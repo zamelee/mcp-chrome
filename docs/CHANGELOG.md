@@ -1,3 +1,30 @@
+## [v1.10.2] - 2026-08-07
+
+### Added
+
+- **Chrome toolbar icon 状态机 (8-state IconManager)** (痛点: 之前 toolbar icon 永远是同一张静态图, 用户看不出扩展健康状态; 现在 8 状态 + 优先级 + sticky-error + throttle coalesce + badge text)。
+
+  改动:
+  - 新增 `entrypoints/background/icon-manager.ts` (155 行): 8 IconState (READY / SERVICE_DOWN / DISCONNECTED_AUTO / DISCONNECTED_MANUAL / ERROR / BUSY / STALE / CODEX_IDLE) + 优先级 (1-8) + sticky ERROR 5s lock + 250ms throttle + setBadgeText/setBadgeBackgroundColor + IconState path 生成 (`icons/<state>/{16,32,48}.png`)。
+  - 新增 `public/icons/` 下 8 套 (24 个 PNG): 通过 PIL `tmp/_gen_icons.py` 一次性生成 (16/32/48 px, ~200-400 bytes each)。
+  - 修改 `wxt.config.ts` `manifest.action.default_icon` 指向 `ready` 套 (默认状态), runtime 由 icon-manager 切换其他 7 套。
+  - `bridge-control.ts`: `onBridgeStarted` set READY; `onBridgeStopped` set DISCONNECTED_AUTO + clear READY/BUSY。
+  - `native-host.ts`: `call_tool` 入口 set BUSY (开始) -> clear BUSY (完成) / set ERROR (失败); `ERROR_FROM_NATIVE_HOST` set ERROR。
+
+  设计:
+  - 优先级: ERROR (8) > BUSY (7) > STALE (6) > SERVICE_DOWN (5) > DISCONNECTED_MANUAL (4) > DISCONNECTED_AUTO (3) > CODEX_IDLE (2) > READY (1)。
+  - sticky ERROR: 一旦触发, 锁 5s 防止后续 READY heartbeat 立即覆盖。
+  - throttle 250ms: 多次状态更新在同一 tick 合并为 1 次 setIcon。
+  - badge text 上限: 按 chrome 文档 <=4 chars (用 `!`/`X`/`E`/`?`/`*`/`0`/`...`)。
+
+  验证: chrome-extension vitest 532 -> **543** (+11 new icon-manager tests: priority order / ERROR sticky / BUSY/RESET / clear semantics / throttle coalesce / badge text + bg color); native-server 108/108 unchanged; pnpm build OK; manifest default_icon 包含 ready 套。
+
+### Notes
+
+- chatgpt "dynamic loading chrome.action icon 时不能画图, 必须预生成" 限制严格遵守 - 8 套 PNG 在 build-time 生成。
+- icon-manager 是 module-level singleton, 跟 monitor 一样靠 debounced/coalesced update 避免高频 churn。
+- pre-existing bridge-control.ts 类型错误未在本 patch 修复 (已知遗留)。
+
 ## [v1.10.1] - 2026-08-07
 
 ### Added
