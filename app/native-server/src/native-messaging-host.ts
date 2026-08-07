@@ -181,6 +181,21 @@ export class NativeMessagingHost {
         case NativeMessageType.STOP:
           await this.stopServer();
           break;
+        case 'FORCE_RESET_SESSIONS':
+          // v1.9.6: Popup "Reset Sessions" button — close all MCP transports,
+          // forcing clients (e.g. Codex desktop) to re-initialize. Native-host
+          // stays alive; only the bridge-side session map is cleared.
+          if (this.associatedServer) {
+            const result = await this.associatedServer.forceResetSessions();
+            this.sendMessage({
+              type: 'force_reset_response',
+              responseToRequestId: message.requestId,
+              payload: result,
+            });
+          } else {
+            this.sendError('No server associated to force-reset sessions');
+          }
+          break;
         // Keep ping/pong for simple liveness detection, but this differs from request-response pattern
         case 'ping_from_extension':
           this.sendMessage({ type: 'pong_to_extension' });

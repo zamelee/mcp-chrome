@@ -741,6 +741,32 @@ export const initNativeHostListener = () => {
       return true;
     }
 
+    // v1.9.6: popup "Reset Sessions" button — forward FORCE_RESET_SESSIONS to bridge
+    if (message.type === BACKGROUND_MESSAGE_TYPES.FORCE_RESET_SESSIONS) {
+      if (!nativePort) {
+        sendResponse({ ok: false, error: 'Native host not connected' });
+        return true;
+      }
+      // Use a unique request id so the native-host can correlate the response.
+      const requestId = `reset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const timeout = setTimeout(() => {
+        sendResponse({ ok: false, error: 'force_reset_sessions timed out after 5s' });
+      }, 5000);
+      const onNativeMessage = (msg: any) => {
+        if (msg && msg.type === 'force_reset_response' && msg.responseToRequestId === requestId) {
+          clearTimeout(timeout);
+          chrome.runtime.onMessage.removeListener(onNativeMessage);
+          sendResponse({ ok: true, reset: msg.payload?.reset ?? 0 });
+        }
+      };
+      chrome.runtime.onMessage.addListener(onNativeMessage);
+      nativePort.postMessage({
+        type: 'FORCE_RESET_SESSIONS',
+        requestId,
+      });
+      return true;
+    }
+
     // Forward file operation messages to native host
     if (message.type === 'forward_to_native' && message.message) {
       if (nativePort) {

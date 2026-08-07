@@ -26,6 +26,8 @@ export const BACKGROUND_MESSAGE_TYPES = {
   START_NATIVE_SERVER: 'start_native_server',
   SERVER_STATUS_CHANGED: 'server_status_changed',
   INITIALIZE_SEMANTIC_ENGINE: 'initialize_semantic_engine',
+  // v1.9.6: popup rescue buttons (reload extension / reset MCP sessions)
+  FORCE_RESET_SESSIONS: 'force_reset_sessions',
   // Record & Replay background control and queries
   RR_START_RECORDING: 'rr_start_recording',
   RR_STOP_RECORDING: 'rr_stop_recording',

@@ -131,6 +131,21 @@ const fallbackMessages: Record<string, string> = {
   newTabLabel: 'New Tab',
   currentPageLabel: 'Current Page',
 
+  // v1.'.6: rescue buttons for SESSION_NOT_FOUND recovery
+  rescueHeader: 'MCP-Chrome 假死? 救援工具',
+  rescueDesc:
+    'Reload 按钮会重启 extension + bridge。Reset 按钮会先强制清掉所有 MCP session 再 reload。如果 Codex 还是 SESSION_NOT_FOUND, 请 restart Codex desktop。',
+  reloadExtensionButton: 'Reload Extension',
+  reloadExtensionConfirm:
+    '确定 reload extension? 这会关闭所有 tab 几秒钟。\n如果还是 SESSION_NOT_FOUND, 也需要 restart Codex desktop。',
+  reloadExtensionInProgress: 'Reloading extension... native-host + bridge 都会重启',
+  resetSessionsButton: 'Reset Sessions',
+  resetSessionsConfirm:
+    'Reset 所有 MCP sessions? 这会关闭所有 Codex MCP 连接, 然后 reload extension。\n请在 reset 后也 restart Codex desktop 以确保全新连接。',
+  resetSessionsInProgress: 'Resetting sessions...',
+  resetSessionsDone: 'Sessions cleared, reloading extension in 200ms',
+  rescueFailed: 'Rescue failed',
+
   // Accessibility
   menuLabel: 'Menu',
   navigationLabel: 'Navigation',

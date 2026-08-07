@@ -249,6 +249,32 @@ export class Server {
     }
   }
 
+  /**
+   * v1.9.6: Force-reset ALL active MCP sessions without waiting for TTL.
+   * Used by the popup "Reset Sessions" button when SESSION_NOT_FOUND persists
+   * after extension reload (Codex desktop may cache the old sessionId).
+   *
+   * Closes every active transport (which forces clients to re-initialize),
+   * clears the map, and bumps reclaimedSessions for /status visibility.
+   *
+   * Safe to call from native-host FORCE_RESET_SESSIONS message handler.
+   */
+  public async forceResetSessions(): Promise<{ reset: number }> {
+    const sessions = [...this.transportsMap.entries()];
+    let reset = 0;
+    for (const [sessionId, session] of sessions) {
+      if (session.activeRequests > 0) {
+        // Skip in-flight requests; they will be rejected when transport closes.
+        // The MCP SDK will surface the close to the client.
+      }
+      this.transportsMap.delete(sessionId);
+      this.reclaimedSessions++;
+      reset++;
+      await session.transport.close().catch(() => undefined);
+    }
+    return { reset };
+  }
+
   // ============================================================
   // Extension Routes
   // ============================================================
@@ -695,4 +721,5 @@ export class Server {
 }
 
 const serverInstance = new Server();
+export { serverInstance };
 export default serverInstance;

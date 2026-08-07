@@ -76,6 +76,36 @@
               </div>
             </div>
 
+            <div
+              v-if="nativeConnectionStatus === 'connected'"
+              class="rescue-section"
+              data-testid="rescue-section"
+            >
+              <div class="rescue-header">{{ getMessage('rescueHeader') }}</div>
+              <div class="rescue-desc">{{ getMessage('rescueDesc') }}</div>
+              <div class="rescue-actions">
+                <button
+                  class="rescue-btn"
+                  :disabled="rescueInProgress"
+                  data-testid="reload-extension-btn"
+                  @click="reloadExtensionRescue"
+                >
+                  {{ getMessage('reloadExtensionButton') }}
+                </button>
+                <button
+                  class="rescue-btn rescue-btn-warning"
+                  :disabled="rescueInProgress"
+                  data-testid="reset-sessions-btn"
+                  @click="resetSessionsRescue"
+                >
+                  {{ getMessage('resetSessionsButton') }}
+                </button>
+              </div>
+              <div v-if="rescueMessage" class="rescue-message" data-testid="rescue-message">
+                {{ rescueMessage }}
+              </div>
+            </div>
+
             <div v-if="showMcpConfig" class="mcp-config-section">
               <div class="mcp-config-header">
                 <p class="mcp-config-label">{{ getMessage('mcpServerConfigLabel') }}</p>
@@ -1457,6 +1487,47 @@ const startService = async () => {
     console.error('Start service failed:', e);
   }
 };
+
+// v1.9.6: rescue buttons for SESSION_NOT_FOUND recovery
+const rescueInProgress = ref(false);
+const rescueMessage = ref<string>('');
+
+async function reloadExtensionRescue() {
+  if (rescueInProgress.value) return;
+  if (!confirm(getMessage('reloadExtensionConfirm'))) return;
+  rescueInProgress.value = true;
+  rescueMessage.value = getMessage('reloadExtensionInProgress');
+  try {
+    // chrome.runtime.reload() tears the stdio pipe; native-host exits, bridge restarts,
+    // 12306 closes. Codex MCP transport should auto-reconnect on socket close.
+    chrome.runtime.reload();
+  } catch (e) {
+    rescueMessage.value = `${getMessage('rescueFailed')}: ${e instanceof Error ? e.message : String(e)}`;
+    rescueInProgress.value = false;
+  }
+}
+
+async function resetSessionsRescue() {
+  if (rescueInProgress.value) return;
+  if (!confirm(getMessage('resetSessionsConfirm'))) return;
+  rescueInProgress.value = true;
+  rescueMessage.value = getMessage('resetSessionsInProgress');
+  try {
+    // Step 1: ask background to forward FORCE_RESET_SESSIONS to bridge via native port
+    const response = await chrome.runtime.sendMessage({
+      type: BACKGROUND_MESSAGE_TYPES.FORCE_RESET_SESSIONS,
+    });
+    if (!response || !response.ok) {
+      throw new Error(response?.error || 'force_reset_sessions failed');
+    }
+    rescueMessage.value = `${getMessage('resetSessionsDone')} (${response.reset ?? 0})`;
+    // Step 2: reload extension so native port restarts cleanly
+    setTimeout(() => chrome.runtime.reload(), 200);
+  } catch (e) {
+    rescueMessage.value = `${getMessage('rescueFailed')}: ${e instanceof Error ? e.message : String(e)}`;
+    rescueInProgress.value = false;
+  }
+}
 
 const testNativeConnection = async () => {
   if (isConnecting.value) return;
@@ -3394,5 +3465,64 @@ onUnmounted(() => {
 
 .service-warning-btn-primary:hover {
   background: #d97706;
+}
+
+/* v1.9.6: rescue section */
+.rescue-section {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.06);
+}
+.rescue-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fbbf24;
+  margin-bottom: 4px;
+}
+.rescue-desc {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 10px;
+  line-height: 1.45;
+}
+.rescue-actions {
+  display: flex;
+  gap: 8px;
+}
+.rescue-btn {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.rescue-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+.rescue-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.rescue-btn-warning {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fca5a5;
+}
+.rescue-btn-warning:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.12);
+}
+.rescue-message {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #cbd5e1;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
 }
 </style>

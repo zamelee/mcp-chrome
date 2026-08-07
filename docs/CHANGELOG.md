@@ -1,3 +1,35 @@
+## [v1.9.6] - 2026-08-07
+
+### Added
+
+- **Popup 救援按钮 (mcp-chrome 假死恢复)** (痛点: Codex desktop MCP transport 缓存 stale sessionId 后,即使 reload extension 也无法 re_initialize; reload 之后必须 restart Codex desktop 才能恢复)。在 popup status section 加了 2 个救援按钮:
+  - **Reload Extension**: `chrome.runtime.reload()` — extension 卸载重装 → native-host pipe 断 → bridge 子进程 exit → 12306 端口断开。Codex MCP transport 应该 auto-reconnect。
+  - **Reset Sessions**: 通过 native-port 通知 bridge 调用 `server.forceResetSessions()` (新增),强制 close 所有 active MCP transports,然后 chrome.runtime.reload()。即使 Codex 不 auto-reconnect,broadcast 给每个 transport 的 close frame 也会触发 reconnect。
+
+- **bridge `forceResetSessions()` public method**: 遍历 `transportsMap`,对每个 session 调 `transport.close()`,清空 map。`/status` 报告 `activeSessions: 0` + `reclaimedSessions` 递增。幂等,空 map 调用安全。
+
+- **native-host `FORCE_RESET_SESSIONS` case**: 新增 control message 类型,extension background 转发到此 → bridge 调 `forceResetSessions()` → response 带回 reset count。
+
+- **background `FORCE_RESET_SESSIONS` message handler**: popup 按钮触发,通过 `chrome.runtime.sendMessage` 转发给 native port,等响应后 reload extension。
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.5 -> 1.9.6
+- `app/native-server/package.json`: 1.9.5 -> 1.9.6
+- `packages/shared/package.json`: 1.9.5 -> 1.9.6
+- `package.json`: 1.9.5 -> 1.9.6 (governance infra)
+
+### Tests
+
+- native-server: **108/108** pass (新增 1 个 `forceResetSessions` 测试: clears all MCP transports + 幂等性)
+- chrome-extension: **505/505** pass (无新增 — 救援按钮纯 UI 改动通过 e2e 验证)
+
+### Notes
+
+- **设计哲学**: reload extension 是温和恢复(赌 Codex auto-reconnect),reset sessions 是强制恢复(确保 transport close 触发)。两步式按钮让用户先试简单的,失败再试重的。
+- **推荐顺序**: Reload 不行就 Reset,Reset 还不救活就 restart Codex desktop。
+- 已知边界: Codex desktop MCP transport 不监听 MCP `notifications/cancelled` 或 `notifications/closed`,所以即使 bridge close transports,Codex 仍可能不 re_initialize。这是 v1.10 (daemon 模式) 才能根治的问题。
+
 ## [v1.9.5] - 2026-08-05
 
 ### Fixed

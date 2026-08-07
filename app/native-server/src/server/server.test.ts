@@ -1,6 +1,6 @@
 import { describe, expect, test, afterAll, beforeAll } from '@jest/globals';
 import supertest from 'supertest';
-import Server from './index';
+import Server, { serverInstance } from './index';
 import { getLatestExtensionConnection } from '../control-state';
 import { _resetControlStateForTests } from '../control-state';
 
@@ -36,6 +36,29 @@ describe('服务器测试', () => {
     });
     expect(response.body.mcp).toMatchObject({ activeSessions: 0, streamableHttp: true });
     expect(response.body.tools.count).toBeGreaterThan(0);
+  });
+
+  // v1.9.6: forceResetSessions() must close all transports and clear the map.
+  test('forceResetSessions clears all MCP transports', async () => {
+    // serverInstance is the Server class instance (default export);
+    // Server.getInstance() returns FastifyInstance (this.fastify), not the Server class.
+    const server = serverInstance;
+    const beforeRes = await supertest(server.getInstance().server).get('/status').expect(200);
+    const reclaimedBefore = beforeRes.body.mcp.reclaimedSessions;
+
+    const result = await server.forceResetSessions();
+    expect(typeof result.reset).toBe('number');
+    expect(result.reset).toBeGreaterThanOrEqual(0);
+
+    const afterRes = await supertest(server.getInstance().server).get('/status').expect(200);
+    expect(afterRes.body.mcp.activeSessions).toBe(0);
+    expect(afterRes.body.mcp.reclaimedSessions).toBeGreaterThanOrEqual(
+      reclaimedBefore + result.reset,
+    );
+
+    // Idempotent: invoking again on empty map is a no-op.
+    const secondResult = await server.forceResetSessions();
+    expect(secondResult.reset).toBe(0);
   });
 });
 
