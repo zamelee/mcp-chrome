@@ -196,10 +196,12 @@ class FileUploadTool extends BaseBrowserToolExecutor {
     expectedFiles: string[],
     cdp: typeof cdpSessionManager,
   ): Promise<{
-    status: 'succeeded' | 'rejected' | 'uncertain' | 'probe_failed';
+    status: 'succeeded' | 'rejected' | 'dialog_blocked' | 'uncertain' | 'probe_failed';
     fileInputFiles?: string[];
     chipTexts?: string[];
     newErrors?: string[];
+    dialogText?: string;
+    dedupKeyword?: string;
     reason?: string;
   }> {
     const expected = expectedFiles.map((f) => {
@@ -229,7 +231,15 @@ class FileUploadTool extends BaseBrowserToolExecutor {
             if (t.length > 5 && t.length < 500) errs.add(t);
           });
         }
-        return JSON.stringify({ fileInputFiles: files, chips: Array.from(chips), errors: Array.from(errs) });
+        // v1.10.0: also collect visible [role="dialog"] text. Some vendors
+        // (chatgpt) surface dedup as a dialog rather than a banner.
+        const dialogs = new Set();
+        document.querySelectorAll('[role="dialog"]').forEach(n => {
+          if (n.offsetParent === null) return;
+          const t = (n.textContent || '').trim();
+          if (t.length > 5 && t.length < 500) dialogs.add(t);
+        });
+        return JSON.stringify({ fileInputFiles: files, chips: Array.from(chips), errors: Array.from(errs), dialogs: Array.from(dialogs) });
       })()
     `;
     try {
@@ -241,7 +251,12 @@ class FileUploadTool extends BaseBrowserToolExecutor {
       if (typeof value !== 'string') {
         return { status: 'probe_failed', reason: 'probe returned non-string' };
       }
-      let parsed: { fileInputFiles: string[]; chips: string[]; errors: string[] };
+      let parsed: {
+        fileInputFiles: string[];
+        chips: string[];
+        errors: string[];
+        dialogs: string[];
+      };
       try {
         parsed = JSON.parse(value);
       } catch {
@@ -250,22 +265,29 @@ class FileUploadTool extends BaseBrowserToolExecutor {
       const fileInputFiles = Array.isArray(parsed.fileInputFiles) ? parsed.fileInputFiles : [];
       const chipTexts = Array.isArray(parsed.chips) ? parsed.chips : [];
       const newErrors = Array.isArray(parsed.errors) ? parsed.errors : [];
+      const newDialogs = Array.isArray(parsed.dialogs) ? parsed.dialogs : [];
       const allMatched = expected.length > 0 && expected.every((n) => fileInputFiles.includes(n));
       const chipMatched =
         expected.length === 0 || expected.some((n) => chipTexts.some((c) => c.includes(n)));
-      const errorsMentionFile = newErrors.filter((e) => expected.some((n) => e.includes(n)));
-      const errorsGeneric = newErrors.filter((e) =>
-        /unsupported|invalid|reject|fail|error/i.test(e),
-      );
-      if (!allMatched) {
-        return {
-          status: 'uncertain',
-          fileInputFiles,
-          chipTexts: chipTexts.slice(0, 5),
-          newErrors: newErrors.slice(0, 5),
-          reason: 'file input did not reflect expected files',
-        };
+
+      // v1.10.0 Bug 2: filter instrumentation noise before keyword match.
+      const errorsReal = newErrors.filter(isRealError);
+      const errorsMentionFile = errorsReal.filter((e) => expected.some((n) => e.includes(n)));
+      const errorsGeneric = errorsReal;
+
+      // v1.10.0 Bug 3: scan dialogs for dedup signal.
+      interface DedupMatch {
+        text: string;
+        keyword: string;
       }
+      const dedupDialog = newDialogs
+        .map((t): DedupMatch | null => {
+          const keyword = extractDedupKeyword(t);
+          return keyword === null ? null : { text: t, keyword };
+        })
+        .find((d): d is DedupMatch => d !== null);
+
+      // v1.10.0 Bug 1: errors-first verdict order.
       if (errorsMentionFile.length > 0) {
         return {
           status: 'rejected',
@@ -273,6 +295,26 @@ class FileUploadTool extends BaseBrowserToolExecutor {
           chipTexts: chipTexts.slice(0, 5),
           newErrors: errorsMentionFile.slice(0, 5),
           reason: 'page error references uploaded filename',
+        };
+      }
+      if (dedupDialog) {
+        return {
+          status: 'dialog_blocked',
+          fileInputFiles,
+          chipTexts: chipTexts.slice(0, 5),
+          newErrors: newErrors.slice(0, 5),
+          dialogText: dedupDialog.text,
+          dedupKeyword: dedupDialog.keyword,
+          reason: 'visible dialog contains dedup keyword',
+        };
+      }
+      if (!allMatched) {
+        return {
+          status: 'rejected',
+          fileInputFiles,
+          chipTexts: chipTexts.slice(0, 5),
+          newErrors: newErrors.slice(0, 5),
+          reason: 'file input did not reflect expected files (backend likely rejected)',
         };
       }
       if (chipMatched && errorsGeneric.length === 0) {
@@ -335,3 +377,60 @@ class FileUploadTool extends BaseBrowserToolExecutor {
 }
 
 export const fileUploadTool = new FileUploadTool();
+/**
+ * v1.10.0: Multi-vendor upload-dedup signal detection.
+ *
+ * chatgpt.com fires a dialog with text like "You've already uploaded this
+ * file. Try uploading something new." (per-account cache, surfaced as a
+ * `role="dialog"` element). github.com/copilot rejects silently and surfaces
+ * "unsupported file type" in a banner. gemini.google.com hash-dedups the
+ * filename and either accepts the original content from conversation history
+ * or silently rejects the re-upload.
+ *
+ * We catch all three via dialog text matching; downstream `status` is the
+ * agent-facing signal.
+ */
+const DEDUP_KEYWORDS: RegExp[] = [
+  /already uploaded/i,
+  /file already exists/i,
+  /duplicate (?:file|upload)/i,
+  /\u5df2\u4e0a\u4f20/,
+  /\u91cd\u590d\u4e0a\u4f20/,
+  /\u6587\u4ef6\u5df2\u5b58\u5728/,
+  /already attached/i,
+  /already (?:been )?uploaded/i,
+  /same file/i,
+];
+
+/**
+ * v1.10.0: Filter out page instrumentation noise from collected `errors`.
+ *
+ * chatgpt.com embeds performance-marker scripts (`__oai_logHTML`, `__oai_SSR_*`,
+ * `requestAnimationFrame`, inline `addEventListener` lambdas) inside
+ * `role="alert"` nodes. The full textContent of those nodes is collected
+ * by the previous probe, and matches against the uploaded filename when
+ * `errorsMentionFile` runs. We strip these patterns before keyword-matching
+ * so we only count real backend rejections.
+ */
+const INSTRUMENTATION_NOISE: RegExp[] = [
+  /__oai_(?:logHTML|logTTI|SSR_HTML|SSR_TTI)/,
+  /addEventListener\(`input`/,
+  /requestAnimationFrame\(/,
+  /window\.__oai_/,
+  /performance\.mark/,
+];
+
+/** v1.10.0: True iff `text` looks like a real backend rejection (not instrumentation). */
+function isRealError(text: string): boolean {
+  if (INSTRUMENTATION_NOISE.some((p) => p.test(text))) return false;
+  return /\b(?:error|fail|rejected|invalid|unsupported|denied|forbidden)\b/i.test(text);
+}
+
+/** v1.10.0: Return the first dedup keyword that matches `text`, or null. */
+function extractDedupKeyword(text: string): string | null {
+  for (const re of DEDUP_KEYWORDS) {
+    const m = text.match(re);
+    if (m) return m[0];
+  }
+  return null;
+}

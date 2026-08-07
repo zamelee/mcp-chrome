@@ -1,3 +1,40 @@
+## [v1.10.0] - 2026-08-07
+
+### Fixed
+
+- **chrome_upload_file `verifyPostcondition` 三 bug 修复** (痛点: agent 无法稳定判断 chatgpt.com / github.com/copilot / gemini.google.com 的真实上传结果)。
+
+  根因 (v1.9.5 设计的盲区):
+  - **Bug 1 (判定顺序)**: `if (!allMatched) return uncertain` 先于 errors 检查 → github.com/copilot 后端拒收后清空 fileInput → allMatched=false → 直接走 uncertain → 应该 rejected 的被判成 uncertain。
+  - **Bug 2 (误判)**: chatgpt.com 在 `role="alert"` 节点里嵌入 instrumentation script (`__oai_logHTML`, `__oai_SSR_*`, `requestAnimationFrame`, inline `addEventListener` lambda) → 整段 textContent 被收集进 `newErrors` → `errorsMentionFile` 匹配到 filename → 误判 rejected (实际 upload 成功)。
+  - **Bug 3 (dedup dialog 不检测)**: chatgpt.com per-account dedup 弹 `role="dialog"` 含 "already uploaded this file" → 完全没被探针扫到 → 既不是 succeeded 也不是 rejected 或 dedup 标记。
+
+  修法 (3 处加 1 status):
+  - 加 module-level `DEDUP_KEYWORDS` (chatgpt/copilot/gemini 多 vendor 关键字) + `INSTRUMENTATION_NOISE` (chatgpt 噪音模式) + `isRealError()` / `extractDedupKeyword()` 辅助函数。
+  - 加 `[role="dialog"]` 节点扫描到 probe expression。
+  - 判定顺序改为 **errors-first → dialog-dedup → fileInput → chip**，新增 status `'dialog_blocked'`。
+  - 用 `DedupMatch` 类型 + `(d): d is DedupMatch` type-guard predicate 替代 `find()` + 后置 narrowing（更安全、可读）。
+
+  影响范围: 仅 `app/chrome-extension/entrypoints/background/tools/browser/file-upload.ts` 1 个文件; TypeScript 编译 0 error; vitest 505 → **518** (+13 新测试)。
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.8 -> 1.10.0
+- `app/native-server/package.json`: 1.9.8 -> 1.10.0
+- `packages/shared/package.json`: 1.9.8 -> 1.10.0
+- `package.json`: 1.9.8 -> 1.10.0 (governance infra)
+
+### Tests
+
+- chrome-extension: **518/518** pass (+13 new: 6 helper coverage + 6 verdict branch logical spec + 1 Bug 2 regression guard)
+- native-server: **108/108** pass (unchanged)
+
+### Notes
+
+- agent 拿到新 status 后怎么 fallback 写进 AGENTS.md §0a.x.9 (下一个 patch)。
+- `_verifyUploadPostcondition` 仍然是 private method — 测试通过复制 regex 列表 + 复制 verdict 逻辑到 test file 实现 (mirror)。后续如要直接测 private method，需要 export 一个 thin wrapper。
+- pre-existing 的 `bridge-control.ts` / `performance.ts` 类型错误不在本 patch 范围 (v1.9.x 时代遗留)，下个 patch 单独修。
+
 ## [v1.9.8] - 2026-08-07
 
 ### Fixed
