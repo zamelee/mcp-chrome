@@ -1,3 +1,31 @@
+## [v1.9.7] - 2026-08-07
+
+### Fixed
+
+- **Chrome DevTools Console preload warnings on offscreen document** (痛点: chrome-extension offscreen documents 加载后,Console 报一堆 `preload ... is found, but it is not used because it is a cross-origin resource` + `preloaded using link preload but not used within a few seconds from the windows load event`)。
+
+  根因: Vite 默认会给 ES module chunks 输出 `<link rel="modulepreload" crossorigin>` 以启用 CORS module loading。对 HTTP/HTTPS origin 没问题,但对 `chrome-extension://` 的 offscreen document,Chrome 会先做 CORS preflight 失败,然后标记为 unused。这是 Vite 的默认行为,v1.9.5 / v1.9.6 都有,只是 offscreen.html 加载时统一暴露。
+
+  修法: `wxt.config.ts` 加 `mcp-chrome-strip-offscreen-preload` Vite 插件,`transformIndexHtml` 钩子在 post 阶段检测 offscreen.html,剥离所有 `<link rel="modulepreload">` 标签。Offscreen document 初始化是 lazy 的(等消息),不需要 preload — 反而 preload 触发的 CORS preflight 失败让 Chrome 误报 warnings。
+
+  影响范围: 仅 offscreen.html (5 个 HTML 入口之一)。其他 HTML (popup/options/sidepanel/welcome/builder) 保留 Vite 默认的 preload,无 regression。
+
+### Changed
+
+- `app/chrome-extension/package.json`: 1.9.6 -> 1.9.7
+- `app/native-server/package.json`: 1.9.6 -> 1.9.7
+- `packages/shared/package.json`: 1.9.6 -> 1.9.7
+- `package.json`: 1.9.6 -> 1.9.7 (governance infra)
+
+### Tests
+
+- chrome-extension: **505/505** pass (build output transform, no runtime impact)
+
+### Notes
+
+- 验证方法: Chrome 加载 v1.9.7 extension 后,F12 -> Console,reload extension 后**不应**再看到 `_chrome-extension://gjdjnkapckcbblcnepfmpfdhejjdml/chunks/asyncToGenerator-...` 和 `objectSpread2-...` 相关的 4 条 preload warnings。其他入口 (popup/options/welcome/sidepanel) 仍有 preload(正常显示 + 实际使用),所以**不**应该看到它们的 preload warnings — 仅 offscreen 之前会。
+- 不依赖 Vite 升级或 Rollup 配置变化 — 仅 build-time transform hook。
+
 ## [v1.9.6] - 2026-08-07
 
 ### Added

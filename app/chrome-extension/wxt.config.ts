@@ -169,6 +169,26 @@ export default defineConfig({
           // Vite plugin will watch src patterns and re-copy on change
         } as any,
       }) as any,
+      // v1.9.6: Strip modulepreload links from offscreen.html to avoid CORS
+      // preflight failures on chrome-extension:// URLs. Offscreen documents
+      // initialize lazily and do not benefit from preloading anyway.
+      {
+        name: 'mcp-chrome-strip-offscreen-preload',
+        transformIndexHtml: {
+          order: 'post',
+          handler(html, ctx) {
+            const isOffscreen =
+              ctx.filename &&
+              (ctx.filename.endsWith('offscreen.html') ||
+                ctx.filename.endsWith('offscreen\\index.html') ||
+                ctx.filename.endsWith('offscreen/index.html'));
+            if (isOffscreen) {
+              return html.replace(/<link rel="modulepreload"[^>]*>\s*\n?/g, '');
+            }
+            return html;
+          },
+        },
+      },
     ],
     build: {
       // 我们的构建产物需要兼容到es6
