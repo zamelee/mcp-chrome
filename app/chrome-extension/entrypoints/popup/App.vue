@@ -106,6 +106,9 @@
               </div>
             </div>
 
+            <!-- v1.10.1: Double-work communication monitor panel -->
+            <MessageFlow />
+
             <div v-if="showMcpConfig" class="mcp-config-section">
               <div class="mcp-config-header">
                 <p class="mcp-config-label">{{ getMessage('mcpServerConfigLabel') }}</p>

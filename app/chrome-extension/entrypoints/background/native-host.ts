@@ -2,6 +2,7 @@ import { NativeMessageType } from '@ethanwilkins/chrome-mcp-shared-2026';
 import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import { NATIVE_HOST, STORAGE_KEYS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '@/common/constants';
 import { handleCallTool } from './tools';
+import { recordMessage as monitorRecord } from './monitor';
 import { getFlow, listFlows } from './record-replay-v3/public-api';
 import { acquireKeepalive } from './keepalive-manager';
 import { onBridgeStarted, onBridgeStopped } from './bridge-control';
@@ -350,6 +351,9 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
     nativePort = chrome.runtime.connectNative(HOST_NAME);
 
     nativePort.onMessage.addListener(async (message) => {
+      // v1.10.1: record every native -> background message into the
+      // popup monitor (ring buffer + chrome.storage.session).
+      monitorRecord({ layer: 'native', direction: 'in', type: message?.type ?? '<unknown>', payload: message?.payload });
       if (message.type === NativeMessageType.PROCESS_DATA && message.requestId) {
         const requestId = message.requestId;
         const requestPayload = message.payload;
@@ -452,6 +456,8 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
         console.error('Error from native host:', message.payload?.message || 'Unknown error');
       } else if (message.type === 'file_operation_response') {
         // Forward file operation response back to the requesting tool
+        // v1.10.1: record broadcast in monitor before sending.
+        monitorRecord({ layer: 'background', direction: 'out', type: 'file_operation_response', payload: message });
         chrome.runtime.sendMessage(message).catch(() => {
           // Ignore if no listeners
         });
@@ -477,6 +483,8 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
       scheduleReconnect('native_port_disconnected');
     });
 
+    // v1.10.1: record the START message we're about to send.
+    monitorRecord({ layer: 'background', direction: 'out', type: NativeMessageType.START, payload: { port } });
     nativePort.postMessage({ type: NativeMessageType.START, payload: { port } });
     // Note: Don't reset reconnect state here. Wait for SERVER_STARTED confirmation.
     // Chrome may return a Port but disconnect immediately if native host is missing.
@@ -599,6 +607,8 @@ export const initNativeHostListener = () => {
   });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    // v1.10.1: record popup/content -> background traffic for the monitor.
+    monitorRecord({ layer: 'popup', direction: 'in', type: message?.type ?? '<unknown>', payload: message });
     // Allow UI to call tools directly
     if (message && message.type === 'call_tool' && message.name) {
       handleCallTool({ name: message.name, args: message.args })

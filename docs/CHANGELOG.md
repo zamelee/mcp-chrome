@@ -1,3 +1,27 @@
+## [v1.10.1] - 2026-08-07
+
+### Added
+
+- **Popup 双工通讯监控面板 (MessageFlow)** (痛点: 之前 popup 只能看 isRunning / port / lastUpdated, 看不出 message flow 是否正常; debug 要打开 chrome://extensions > service worker console 才能看到 native-host stderr log, 反馈路径太长)。
+
+  改动:
+  - 新增 `entrypoints/background/monitor.ts` (168 行): 200 条 ring buffer + chrome.storage.session 持久化 (debounced 500ms) + subscribe 模式 + safeSummary (敏感字段 redaction + 80 字符截断) + severity 分类 (info / warn / error)。
+  - 新增 `popup/components/MessageFlow.vue` (160 行): 折叠面板 (默认 IN/OUT/ERR/total 计数器) + 展开视图 (时间戳 + 方向箭头 + layer pill + type + redacted summary) + 清空按钮。500ms poll 拉 storage, 不阻塞 message flow。
+  - 在 `native-host.ts` 加 3 处 `recordMessage()`: (1) `nativePort.onMessage` 入站 (2) `nativePort.postMessage(START)` 出站 (3) `chrome.runtime.onMessage` popup->background 入站。
+  - 在 `native-host.ts` 的 `chrome.runtime.sendMessage` broadcast 处加 1 处 `recordMessage()`: file_operation_response 出站。
+  - `common/constants.ts` 加 `STORAGE_KEYS.MESSAGE_BUFFER` 常量。
+  - `App.vue` 在 rescue section 之后 + MCP config section 之前嵌入 `<MessageFlow />`。
+
+  性能: message 流不经过 popup, popup 只是 observer; debounced 500ms storage write 避免 IO burst; safeSummary 自动 redact `token` / `cookie` / `password` / `bearer` / `secret` 字段 (避免 console 暴露敏感数据)。
+
+  验证: chrome-extension vitest 518 -> **532** (+14 new monitor tests: safeSummary / classifySeverity / ring buffer eviction / subscriber / persistence debounce / hydrateFromStorage / clear / aggregate); native-server 108/108 unchanged; popup load verified (HTML grep `message-flow` 在 chunks 里可见)。
+
+### Notes
+
+- MessageFlow 不替换现有 `error-log-modal` (那是 errors-only UI) — 共存, 错误事件同时出现在两处。
+- popup 是 MV3 popup (close 即销毁), onUnmounted 正确清理 monitor subscription + interval。
+- v1.10.0 引入的 `dialog_blocked` postcondition status 跟 monitor 是独立两条线 — 一个是 upload 上传结果判定, 一个是运行时 message flow 监控。
+
 ## [v1.10.0] - 2026-08-07
 
 ### Fixed

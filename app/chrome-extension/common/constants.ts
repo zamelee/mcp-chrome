@@ -236,6 +236,8 @@ export const STORAGE_KEYS = {
   RR_TRIGGERS: 'rr_triggers',
   // Persistent recording state (guards resume across navigations/service worker restarts)
   RR_RECORDING_STATE: 'rr_recording_state',
+  // v1.10.1: popup double-work communication monitor buffer (session-scoped)
+  MESSAGE_BUFFER: 'messageBuffer',
 } as const;
 
 // Notification Configuration
