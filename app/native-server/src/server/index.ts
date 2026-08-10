@@ -49,6 +49,8 @@ import {
   getExtensionConnection,
   getLatestExtensionConnection,
   transitionBridgeState,
+  getBridgeState,
+  getRecoveryTelemetry,
   BridgeState,
 } from '../control-state';
 import { observeHeartbeat } from '../mcp/reload-context';
@@ -171,6 +173,8 @@ export class Server {
           bridgeInstanceId: this.bridgeInstanceId,
           serverStartedAt: this.startedAt,
           uptimeMs: Date.now() - this.startedAt,
+          bridgeState: getBridgeState(),
+          recovery: getRecoveryTelemetry(),
           extension: conn
             ? {
                 extensionId: conn.extensionId,

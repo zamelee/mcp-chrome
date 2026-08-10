@@ -323,9 +323,12 @@ export class NativeMessagingHost {
     }
     try {
       if (this.associatedServer.isRunning) {
+        // v1.11.1 hotfix: pre-bound by index.ts at boot. Treat as success
+        // instead of error so the extension sees SERVER_STARTED and proceeds
+        // to /internal/register + heartbeat without complaining.
         this.sendMessage({
-          type: NativeMessageType.ERROR,
-          payload: { message: 'Server is already running' },
+          type: NativeMessageType.SERVER_STARTED,
+          payload: { port },
         });
         return;
       }
@@ -434,37 +437,25 @@ export class NativeMessagingHost {
     // to stdout corrupts the protocol stream and triggers Chrome to close the
     // host child prematurely on the next connectNative retry. stderr is
     // captured by run_host.bat to native_host_stderr_*.log.
-    process.stderr.write('[native-messaging-host] Connection closed; bridge shutting down.\n');
+    process.stderr.write('[native-messaging-host] Connection closed; staying alive for HTTP.\n');
 
-    // REVERTED Plan Y: stop the HTTP server and exit. Reason: Chrome's native-
-    // messaging host child has the SAME lifetime as its parent render process.
-    // When Chrome kills the parent (e.g. extension reload, GC), the stdio
-    // pipes are torn and any extension trying to connectNative via this
-    // orphan process will fail with "Error when communicating with the native
-    // messaging host" (Chrome's view of the host child is gone). Keeping the
-    // bridge alive after disconnect creates an orphan that Chrome can never
-    // talk to, which traps the extension popup at "Connected, Service Not
-    // Started" forever.
+    // v1.11.1 hotfix (REPLACES REVERTED Plan Y): keep the bridge process alive
+    // after Chrome closes the native host stdio pipe. The HTTP server stays
+    // bound on 12306 (started at boot via index.ts) so existing Codex MCP
+    // sessions + the extension heartbeat loop continue working.
     //
-    // The correct architecture is: bridge dies when Chrome dies. Chrome's
-    // reconnect schedule (scheduleReconnect in background/native-host.ts)
-    // then spawns a fresh host child for the next connectNative retry. Cost:
-    // a few seconds of MCP tool 400 immediately after a reload, but the
-    // overall pipeline (connectNative -> START -> server.start -> 200 ->
-    // SERVER_STARTED -> onBridgeStarted -> /internal/register + heartbeat)
-    // completes cleanly each time.
-    if (this.associatedServer && this.associatedServer.isRunning) {
-      this.associatedServer
-        .stop()
-        .then(() => {
-          process.exit(0);
-        })
-        .catch(() => {
-          process.exit(1);
-        });
-    } else {
-      process.exit(0);
-    }
+    // Why this is safe now (vs the orphan trap the old Plan Y comment warned about):
+    // 1. Chrome connects native host by spawning a fresh host child process;
+    //    that child is THIS process. When Chrome closes the pipe, this process
+    //    has nothing useful left to do via stdin (read loop exits).
+    // 2. But the HTTP server bound at boot (index.ts) keeps 12306 reachable.
+    // 3. New Chrome connectNative attempts spawn NEW bridge processes; their
+    //    startServer() tries to bind 12306 -> EADDRINUSE -> treated as success
+    //    (see startServer() patch below) -> new extension session sees
+    //    SERVER_STARTED; HTTP traffic routes to the original bridge.
+    // 4. Manual shutdown paths still work: STOP message from extension ->
+    //    stopServer() + process.exit(0); SIGINT/SIGTERM -> index.ts handlers.
+    // 5. Orphan cleanup: userland Stop-Process / taskkill (documented in AGENTS.md).
   }
 }
 

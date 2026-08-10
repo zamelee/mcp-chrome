@@ -1,3 +1,36 @@
+## [v1.11.1] - 2026-08-10
+
+### Bridge lifecycle hotfix: pre-bind HTTP at boot + stay alive after native host disconnect
+
+(痛点: v1.11 代码正确但 Chrome cold-start race 让 bridge 每个 ~3 秒死一次。`已连接，服务未启动` 一直挂着，12306 端口从未稳定 bind, popup 永远赶不上一次活连接窗口。)
+
+- `app/native-server/src/index.ts`:
+  - v1.11.1 hotfix: 启动时立即调用 `serverInstance.start(12306, nativeHost)` **before** `nativeHost.start()`。
+  - 原因: Chrome cold-start 时，bridge spawn 后 ~1 秒 native host stdio pipe 就被 Chrome 关掉，extension 的 START 消息来不及送达。预先 bind 12306 让 `/health` + `/internal/register` + `/mcp` 立刻可达。
+  - EADDRINUSE 路径: stderr 写 `[bridge] boot bind skipped: EADDRINUSE` 但 **进程不退出**，继续当 directive 转发 stub。
+- `app/native-server/src/native-messaging-host.ts`:
+  - `cleanup()` 不再调用 `process.exit()` 和 `server.stop()`。新日志 `'[native-messaging-host] Connection closed; staying alive for HTTP.'` 取代原 `'bridge shutting down'`。
+  - 取代 REVERTED Plan Y 注释。新注释解释: bridge 进程继续存活后，HTTP server 保持 bind 12306，Codex MCP 会话 + extension 心跳继续工作；新 Chrome connect 尝试 spawn 新 bridge 撞 EADDRINUSE → 被 `startServer()` 当 success 处理 → 新 extension session 看到 SERVER_STARTED。
+  - `startServer()` 改: 当 `associatedServer.isRunning === true` 时，发送 `SERVER_STARTED`（取代原来的 `ERROR 'Server is already running'`），让 extension 顺利走 register + heartbeat 流程。
+  - 手动 shutdown 路径保留: STOP 消息、`SIGINT` / `SIGTERM` (index.ts 处理)、`Stop-Process` / taskkill。
+- `app/native-server/src/native-messaging-host.test.ts` (new): 5 jest unit tests:
+  - `cleanup() does not call process.exit` (process.exit spy)
+  - `cleanup() logs the new "staying alive for HTTP" message`
+  - `cleanup() does not stop the associated server (no server.stop call)`
+  - `startServer() when server already running sends SERVER_STARTED (not ERROR)`
+  - `startServer() on EADDRINUSE sends SERVER_STARTED (treat as success)`
+
+### Notes
+
+- **生产影响**: 以前每次 Chrome 重启或 reload 都会让 bridge 死掉重建，导致 5-30 秒断流。现在 bridge 持续存活，MCP 工具调用无中断。
+- **已知副作用 (orphan 风险)**: 如果用户 `chrome://quit` 完全退出 Chrome，bridge 进程不会自动退出 (因为没有收到 STOP 消息)。需要 `Stop-Process -Id <pid> -Force` / taskkill 清理。AGENTS.md 已记录此行为。
+- **已知 flaky test**: `register-tools.test.ts` 中 `EXTENSION_STARTING: heartbeat stale + reload recent → error with retryAfterMs` 用了精确时间断言 (`reloadGapMs === 30_000`)，实际可能 1ms drift。1/3-2/3 runs pass。**本 patch 不引入** 该 flakiness (验证: stashed 状态也会偶发 fail)，但建议后续改成 `toBeGreaterThanOrEqual(30_000)` + `toBeLessThanOrEqual(30_005)` 范围断言。
+- **Performance overhead**: pre-bind 12306 在每个 bridge 进程启动时多一次 fastify listen 调用。EADDRINUSE 路径下 stderr 多一行 (新 bridge 看不到，因为旧 bridge 还在)。可忽略。
+- **Tests**: native-server jest 115 → 120 (+5 new lifecycle tests), chrome-extension vitest 544/544 unchanged. Total 664。
+- **Typecheck**: bridge `tsc --noEmit` 0 errors。chrome-extension pre-existing errors unchanged。
+- **v1.11 仍然 ship 的内容 (上一 commit 2879636)**: BridgeState enum + RecoveryTelemetry + /health 暴露字段 + 7 control-state unit tests。这次 v1.11.1 是 lifecycle hotfix，独立 commit。
+- **Refs**: chatgpt 综合 + 用户反馈: "bridge 每个 ~3 秒就死，永远抢不到活连接窗口"。
+
 ## [v1.11] - 2026-08-10
 
 ### Native-host reconnect state machine + recovery telemetry
@@ -356,8 +389,6 @@
 
 - v1.9.3 is a direct fix for the bug visible in user-facing sessions: mcp-chrome HTTP variant would return 400 "Invalid MCP request or session" on every call after extension reload because Codex client keeps the stale sessionId. v1.9.3 makes the response shape RFC-compliant so clients can re_initialize.
 - Per AGENTS.md §0b.7.8 v1.8.1 + v1.8.1 RFC §5.3, the SESSION_NOT_FOUND response should be HTTP 200 + CallToolResult with _meta. This commit implements that spec.
-
-=======
 
 ## [v1.9.2] - 2026-08-03
 
