@@ -1,3 +1,33 @@
+## [v1.11] - 2026-08-10
+
+### Native-host reconnect state machine + recovery telemetry
+
+(chatgpt Q1 D2 路线 + chatgpt v1.10.4 recovery telemetry 合并)
+
+- `app/native-server/src/control-state.ts`:
+  - 新增 `BridgeState` enum (5 态: CONNECTED / DISCONNECTED / BACKOFF / RECONNECTING / READY per RFC §6.1.5).
+  - 新增 `transitionBridgeState(newState, reason)` — transition 调日志 + counter increment.
+  - 新增 `RecoveryTelemetry` interface + module-singleton counter (reinitializeCount, disconnectCount, backoffAttempts + lastXxxAt timestamp).
+  - 新增 `getRecoveryTelemetry()` 返回 snapshot (非 live ref, 防 caller 误改).
+  - 新增 `getBridgeState()` 返回当前 BridgeState.
+  - `ExtensionConnection` 增加 `currentState` + `recovery` 字段 (per-conn snapshot).
+  - `_resetControlStateForTests()` 测试 escape hatch (清空 counters + 重置 state).
+- `app/native-server/src/server/index.ts`:
+  - `/health` endpoint 暴露 `bridgeState` + `recovery` 字段 (RFC §6.1.5 spec).
+  - `/internal/heartbeat` handler 调用 `transitionBridgeState(BridgeState.CONNECTED, ''heartbeat-received'')`.
+- `app/native-server/src/control-state.test.ts` (new): 7 jest unit tests — 初始 state / same-state no-op / DISCONNECTED→CONNECTED 增 reinit / →DISCONNECTED 增 disconn / →BACKOFF 增 backoff / snapshot immutability / reset clears counters. 115/115 jest pass total.
+- `~/.codex/AGENTS.md` §0a.x.9.8 (新增): Bridge 重连状态机 + Recovery Telemetry 文档 — 5 态语义 + counter 字段 + transition trigger + /health 暴露字段 + agent 判读规则 + 反例教训。
+- backup: `app/native-server/src/control-state.ts.bak-pre-v1111-20260810-115949` + `app/native-server/src/server/index.ts.bak-pre-v1111-20260810-121027` + `~/.codex/AGENTS-backups/AGENTS.md.bak-pre-v1111-section-20260810-121419`。
+
+### Notes
+
+- v1.11 与 v1.10.4 (Copilot review follow-up) 独立, 不强行依赖. v1.10.4 已 ship, v1.11 是 v1.10.5 之前单独 release.
+- chatgpt Q1 D2 路线图 v1.10.4 (recovery telemetry + logs) + v1.11 (D2 reset handshake) 合并入此 v1.11 patch — 因为 reset handshake 实际实现 = state machine + telemetry, 不需要额外协议. (MCP StreamableHTTPServerTransport 已有 sessionId 管理 + SoftDegradation 通过 `_meta` recommendation 路径已有; bridge 主动 close SSE 是 future-work 依赖 Codex 升级, 不在本 patch 范围).
+- Risk: medium (control-state + server endpoint 改动 + 新 state machine; 不破坏 `/health` 已有契约 — 新字段是 add-only, 旧 consumer 不受影响).
+- Tests: native-server jest 108 → 115 (+7 new control-state cases), chrome-extension vitest 544/544 unchanged. Total 659。
+- Typecheck: bridge (mcp-chrome-bridge-2026) `tsc --noEmit` 0 errors. chrome-extension `tsc --noEmit` 有 pre-existing errors (verified 不由本 patch 引入, 见 `docs/handoff/RESOLVED.md`).
+- Refs: `docs/rfcs/2026-08-02-mcp-session-soft-degradation.md §6.1.5` + chatgpt Q1 D2 (URL: https://chatgpt.com/c/6a793c18-fc9c-83ea-ad55-301356d6c73b).
+
 ## [v1.10.4] - 2026-08-10
 
 ### Documentation + Tests

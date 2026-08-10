@@ -22,11 +22,90 @@ export interface ExtensionConnection {
   connectedAt: number;
   lastHeartbeat: number;
   liveTargets: Set<string>;
+  /** v1.11: current bridge state (synchronized via transitionBridgeState) */
+  currentState: BridgeState;
+  /** v1.11: recovery telemetry counters per connection */
+  recovery: RecoveryTelemetry;
 }
 
 // Module-singleton state. Reset only on bridge process restart; survives
 // per-connection register/heartbeat churn within a single process lifetime.
 const extensionConnections = new Map<string, ExtensionConnection>();
+
+// ============================================================================
+// v1.11: Bridge state machine (5 states) + recovery telemetry
+// ============================================================================
+
+export enum BridgeState {
+  CONNECTED = 'connected',
+  DISCONNECTED = 'disconnected',
+  BACKOFF = 'backoff',
+  RECONNECTING = 'reconnecting',
+  READY = 'ready',
+}
+
+/**
+ * Recovery telemetry (v1.11): module-singleton counters for /health endpoint.
+ * Reset only on bridge process restart.
+ */
+export interface RecoveryTelemetry {
+  reinitializeCount: number;
+  lastReinitializeAt: number;
+  disconnectCount: number;
+  lastDisconnectAt: number;
+  backoffAttempts: number;
+  lastBackoffAt: number;
+}
+
+const recoveryTelemetry: RecoveryTelemetry = {
+  reinitializeCount: 0,
+  lastReinitializeAt: 0,
+  disconnectCount: 0,
+  lastDisconnectAt: 0,
+  backoffAttempts: 0,
+  lastBackoffAt: 0,
+};
+
+export function getRecoveryTelemetry(): RecoveryTelemetry {
+  return { ...recoveryTelemetry };
+}
+
+/**
+ * v1.11: Transition bridge state with logging (RFC §6.1.5).
+ */
+export function transitionBridgeState(
+  newState: BridgeState,
+  reason: string = '',
+  nowMs: number = Date.now(),
+): BridgeState {
+  const currentState = bridgeState;
+  if (currentState === newState) return currentState;
+  bridgeState = newState;
+  if (newState === BridgeState.READY || newState === BridgeState.CONNECTED) {
+    if (currentState !== BridgeState.CONNECTED && currentState !== BridgeState.READY) {
+      recoveryTelemetry.reinitializeCount += 1;
+      recoveryTelemetry.lastReinitializeAt = nowMs;
+    }
+  }
+  if (newState === BridgeState.DISCONNECTED) {
+    recoveryTelemetry.disconnectCount += 1;
+    recoveryTelemetry.lastDisconnectAt = nowMs;
+  }
+  if (newState === BridgeState.BACKOFF) {
+    recoveryTelemetry.backoffAttempts += 1;
+    recoveryTelemetry.lastBackoffAt = nowMs;
+  }
+  const reasonSuffix = reason ? ' (reason: ' + reason + ')' : '';
+  console.log('[bridge-state] ' + currentState + ' -> ' + newState + reasonSuffix);
+  return currentState;
+}
+
+export function getBridgeState(): BridgeState {
+  return bridgeState;
+}
+
+// Module-singleton bridge state (separate from extensionConnections per RFC §6.1.5).
+let bridgeState: BridgeState = BridgeState.DISCONNECTED;
 
 export function recordExtensionConnection(
   extensionId: string,
@@ -40,6 +119,8 @@ export function recordExtensionConnection(
     connectedAt: existing?.connectedAt ?? nowMs,
     lastHeartbeat: opts.markHeartbeat ? nowMs : (existing?.lastHeartbeat ?? nowMs),
     liveTargets: new Set(opts.liveTargets),
+    currentState: existing?.currentState ?? bridgeState,
+    recovery: existing?.recovery ?? { ...recoveryTelemetry },
   };
   extensionConnections.set(extensionId, conn);
   return conn;
@@ -68,4 +149,11 @@ export function getLatestExtensionConnection(): ExtensionConnection | undefined 
  */
 export function _resetControlStateForTests(): void {
   extensionConnections.clear();
+  bridgeState = BridgeState.DISCONNECTED;
+  recoveryTelemetry.reinitializeCount = 0;
+  recoveryTelemetry.lastReinitializeAt = 0;
+  recoveryTelemetry.disconnectCount = 0;
+  recoveryTelemetry.lastDisconnectAt = 0;
+  recoveryTelemetry.backoffAttempts = 0;
+  recoveryTelemetry.lastBackoffAt = 0;
 }

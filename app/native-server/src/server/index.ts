@@ -48,6 +48,8 @@ import {
   recordExtensionConnection,
   getExtensionConnection,
   getLatestExtensionConnection,
+  transitionBridgeState,
+  BridgeState,
 } from '../control-state';
 import { observeHeartbeat } from '../mcp/reload-context';
 
@@ -619,6 +621,7 @@ export class Server {
       });
       if (ownerId !== null) {
         observeHeartbeat(ownerId);
+        transitionBridgeState(BridgeState.CONNECTED, 'heartbeat-received');
       }
       reply.code(HTTP_STATUS.OK).send({
         success: true,
