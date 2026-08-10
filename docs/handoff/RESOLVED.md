@@ -1,6 +1,14 @@
 # Resolved: Pre-existing TS Errors + Handoff corrections (v1.10.3 patch D)
 
 **Recorded**: 2026-08-10
+**Last verified**: 2026-08-10 (v1.10.4 timestamped versioning per Copilot review §d)
+
+## v1.10.3 (verified 2026-08-10)
+
+- `pnpm -r exec tsc --noEmit`: 0 errors (commit `92d1f11` baseline, re-verified at v1.10.3 commit `108a6d1`)
+- `bridge-control.ts` 5 errors: previously reported errors are no longer reproducible; fix commit not isolated (likely during/after `161a7e6 Plan 2.1 + 2.2` rewrite; no standalone fix commit identified)
+- `performance.ts` 2 errors: previously reported errors are no longer reproducible; fix commit not isolated (likely during/after `eef5d9f` 引入 cycle; no standalone fix commit identified)
+
 **Context**: 之前 session handoff 提到 7 个 pre-existing TS errors (bridge-control.ts 5 + performance.ts 2)。本次 v1.10.3 patch 验证 — 这些 errors 已被顺手修复, 但 handoff 描述未更新, 容易误导后续 Agent。
 
 ---
@@ -42,16 +50,20 @@ $ pnpm -r exec tsc --noEmit
 ## 3. 给后续 Agent 的提示
 
 - **不要再相信"pre-existing 7 TS errors"** — 当前实测 0 errors。
+- **必须** 按 §9.0 (v1.10.4 F-TypecheckPreFlight) 跑 `pnpm -r exec tsc --noEmit` 拿 0-error 基线, 不要直接信任 handoff 描述。
 - 如果 `pnpm -r exec tsc --noEmit` 返非零, 那是**新引入**的 error, 不是 pre-existing。
-- bridge-control.ts 是高频改动文件 (v1.8.1 → v1.10.2 期间改了 9 个 commit), 任何新 patch 加完后跑一遍 typecheck 是 **mandatory**, 不是可选。
+- bridge-control.ts 是高频改动文件 (v1.8.1 → v1.10.4 期间改了 9 个 commit), 任何新 patch 加完后跑一遍 typecheck 是 **mandatory**, 不是可选。
 - performance.ts 自 v1.8 起没改, 仍是 stable; 但跟其他 file 共用类型 (HeartbeatAgeMs / etc.) 时要小心。
 
-## 4. 如何避免旧 claim 重复误导 (chatgpt review 要求)
+## 4. 如何避免旧 claim 重复误导 (v1.10.4 半自动化)
 
-- **每次开新 session** 第一动作 (per §9 启动自检): 跑 `pnpm -r exec tsc --noEmit` 拿 0-error 基线, 不要直接信任 handoff 描述。
+按 Copilot §d review, RESOLVED.md 升级到 timestamped versioning:
+
+- **每次开新 session** 第一动作 (per §9.0 F-TypecheckPreFlight): 跑 `pnpm -r exec tsc --noEmit` 拿 0-error 基线, 不要直接信任 handoff 描述。
 - **新 patch 加完** 后必须 typecheck (mandatory)。
-- **发现 pre-existing 描述与实测不符** 时: 立即写 `docs/handoff/RESOLVED.md` (per pattern), 不要"等下个 patch"。
+- **发现 pre-existing 描述与实测不符** 时: 立即更新 `docs/handoff/RESOLVED.md` (per pattern), 加新 `## v1.10.X (verified YYYY-MM-DD)` entry + commit hash, 不要"等下个 patch"。
 - **CHANGELOG.md** 同步: "已被顺手修复" 应改为 "previously reported errors are no longer reproducible; fix commit not isolated" (chatgpt review 修订)。
+- **Agent compare dates**: 当前 typecheck 日期 vs RESOLVED entry 日期 → 偏差 > 1 周视为 stale, 重新 verify。
 
 ## 5. CHANGELOG 历史同步 (v1.10.3 patch 引用)
 

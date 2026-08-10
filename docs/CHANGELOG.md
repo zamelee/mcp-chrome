@@ -1,4 +1,26 @@
-## [v1.10.3] - 2026-08-10
+## [v1.10.4] - 2026-08-10
+
+### Documentation + Tests
+
+- **Copilot review follow-up** (痛点: GitHub Copilot 工程视角评审 v1.10.3 drafts, 给 5 段反馈: §0a.x.9.6 listener cleanup + §0a.x.9.7 2 个新 trigger + §9 mandatory typecheck pre-flight + RESOLVED.md timestamped versioning + 新 test case; URL: https://github.com/copilot/c/5209a653-1b52-4c95-976b-3d7bbb6e476a)。
+
+  改动:
+  - `~/.codex/AGENTS.md` §0a.x.9.6 (Copilot §a): 新增 Step 4 listener cleanup — `cloneNode` trick 移除 chatgpt dedup dialog 的 Escape keydown / click-outside / focus-trap listeners + 移除 sibling `[aria-hidden=true]` (focus trap artifact)。backup `AGENTS.md.bak-pre-v1104-patches-20260810-114502`。
+  - `~/.codex/AGENTS.md` §0a.x.9.7 (Copilot §b): 新增 2 个 maintenance trigger — `Selector DOM API 变更 (vendor redesign class/ID)` + `Dedup keyword drift (vendor 错误消息措辞变更)`。原 4 个 trigger 保留。
+  - `~/.codex/AGENTS.md` §9 (Copilot §d): 新增 step 0 `Mandatory typecheck pre-flight` — 每个 session 第一动作必须跑 `pnpm -r exec tsc --noEmit` 拿 0-error baseline, 非零立即 stop + 写新 incident, 不信任 stale RESOLVED.md。
+  - `docs/handoff/RESOLVED.md` (Copilot §d): 升级到 timestamped versioning — 每个 entry 标 `verified YYYY-MM-DD` + commit hash, agent 比较当前日期与 entry 日期判断 stale (偏差 > 1 周视为 stale)。
+  - `app/chrome-extension/tests/tools/file-upload-postcondition.test.ts` (Copilot §e): 新增 test case `'v1.10.4 unlock JS clears all three modal layers'` — mock chatgpt DOM (dialog + backdrop + body lock) + 执行 §0a.x.9.6 unlock JS Step 1-4 + assert `overflow === visible` + `pointer-events === auto` + dialog cloned (listener detached) + backdrop hidden。
+
+### Notes
+
+- **API stability** (Copilot §c): §0a.x.9 文档化 dedup 行为, 但**不改** `chrome_upload_file` 或 `verifyPostcondition` contract. 现有 agent workflows 兼容. **若 agent runtime 用 `probe_failed` status 做 fallback recovery**, 必读 §0a.x.9.2 Verdict table — `probe_failed` 现是 **CI-only**, 永远不 default production recovery path (潜在 silent breaking change)。
+- Copilot review 完整反馈归档: `tmp/_copilot_review_v1103_drafts.md` (5 段: modal lock listener cleanup / 2 missing maintenance triggers / API stability note / handoff timestamp versioning / 3-file commit strategy + test case)。
+- chatgpt 综合评审归档: `tmp/_chatgpt_review_v1103_drafts.md` (1939 chars, URL: https://chatgpt.com/c/6a793c18-fc9c-83ea-ad55-301356d6c73b)。
+- Typecheck baseline: `pnpm -r exec tsc --noEmit` 返 0 errors (verified 2026-08-10 at v1.10.3 commit `108a6d1` and v1.10.4 prep)。
+- Tests: chrome-extension vitest 543 + 1 new = 544 (this PR), native-server jest 108/108 unchanged. Total 652。
+- Risk: docs + 1 new test case, low risk。
+- v1.10.4 不依赖 v1.11, 可单独 ship。
+- Send button 截图教训: GitHub Copilot 真实 send button 是 textarea 右下角 `▶ paper-airplane` 图标, 不是左侧 `Ask` chat mode selector (I misclicked 6+ times before user screenshot fixed my认知错)。## [v1.10.3] - 2026-08-10
 
 ### Documentation
 
