@@ -1,4 +1,43 @@
-## [v1.10.2] - 2026-08-07
+## [v1.10.3] - 2026-08-10
+
+### Documentation
+
+- **§0a.x.9 Cross-Vendor Dedup Decision Table** (痛点: v1.10.0 patch 修了 chatgpt/copilot/gemini 三家 dedup detection 但 AGENTS.md 缺决策表; LLM 落地时容易选错 selector / keyword / fallback)。
+
+  改动:
+  - 在用户全局 `~/.codex/AGENTS.md` 新增 §0a.x.9 + §0a.x.9.0-7 (insertion point: line 480, before §0b.7; backup `~/.codex/AGENTS-backups/AGENTS.md.bak-clean-20260810-105932` + `AGENTS.md.bak-pre-v1103-section-xa-x9-20260810-112532`)。
+  - §0a.x.9.0 Quick Decision Summary: 5 行 runbook (Agent 第一眼看的快速判断)。
+  - §0a.x.9.1 Dedup Keyword 矩阵: 9 regex × 3 vendor × selector × accept × UI surface × match keywords。
+  - §0a.x.9.2 Verdict Decision Table: 5 status (succeeded / rejected / dialog_blocked / uncertain / probe_failed) + trigger + UI signal + agent action；明确 uncertain vs probe_failed 区别 (chatgpt review 要求)。
+  - §0a.x.9.3 Decision Tree: 7 行覆盖 800/2000/4000 chars 分界 + 双附件 + vendor-specific 路径。
+  - §0a.x.9.4 Instrumentation Noise: 5 chatgpt 专属 regex + isRealError() flow。
+  - §0a.x.9.5 反例 / 教训: 8 行覆盖 v1.10.0 + 2026-08-10 实测坑 (含 dedup 不要循环 miss + chatgpt modal lock 三层结构)。
+  - §0a.x.9.6 chatgpt Modal Lock 三层结构 (2026-08-10 生产事故案例): dialog + backdrop-blur overlay + body scroll-lock; unlock JS 三件套。
+  - §0a.x.9.7 维护规则 (when to update this table): 新 vendor / regex 变更 / 新 status / production 事故 4 个 trigger。
+
+- **Handoff correction** (痛点: 之前 handoff 描述 "pre-existing 7 TS errors"，实际 v1.10.x 发布前已修复; 但 handoff 描述未更新, 后续会话误以为 7 个 error 还在)。
+
+  改动:
+  - `docs/handoff/2026-08-05-three-line-integration.md` 纳入版本 (从 untracked → git add)。
+  - 新增 `docs/handoff/RESOLVED.md` 记录 TS errors resolved history:
+    - `bridge-control.ts` 5 errors: previously reported errors are no longer reproducible; fix commit not isolated (likely during/after `161a7e6 Plan 2.1 + 2.2` rewrite; no standalone fix commit identified)。
+    - `performance.ts` 2 errors: 同上 (likely during/after `eef5d9f` 引入 cycle; no standalone fix commit)。
+    - 当前实测 `pnpm -r exec tsc --noEmit` 返 0 errors (verified 2026-08-10)。
+  - 加 "如何避免旧 claim 重复误导" 段 (§4 of RESOLVED.md)。
+
+- **CHANGELOG alignment** (痛点: v1.10.0-2 三个 patch 加完, 但 §0a.x.9 table 缺失文档化)。
+
+  改动:
+  - 本 entry 记录 §0a.x.9 patch + handoff correction + commit `v1.10.3` tag。
+
+### Notes
+
+- §0a.x.9 patch 纯文档增量, 不动运行代码, 0 风险。
+- handoff correction 文档增量 + untracked → tracked 转换, 0 风险。
+- 测试基线保持: chrome-extension 543/543, native-server 108/108, TS 0 errors。
+- v1.10.3 不依赖 v1.10.4 / v1.10.5, 可单独 ship。
+- chatgpt review (1939 chars, https://chatgpt.com/c/6a793c18-...) 已归档到 `tmp/_chatgpt_review_v1103_drafts.md` (4 段: accuracy / missing / unclear wording / style consistency)。
+- Copilot engineering review attempt 失败 (React controlled textarea JS-set value 不触发 Ask button click)；chatgpt 综合评审已足够覆盖，跳过。## [v1.10.2] - 2026-08-07
 
 ### Added
 
