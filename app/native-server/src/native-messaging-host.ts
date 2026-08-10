@@ -383,6 +383,16 @@ export class NativeMessagingHost {
    * Send message to Chrome extension
    */
   public sendMessage(message: any): void {
+    // v1.11.2 hotfix: EPIPE / ECONNRESET on closed native host pipe is expected
+    // transient. Chrome disconnects stdio after extension reload, but stdout still
+    // points at the broken pipe until the bridge process exits. Next sendMessage()
+    // write triggers EPIPE. Swallow it: bridge should keep serving HTTP.
+    const isTransientPipeError = (err: any): boolean =>
+      err &&
+      (err.code === 'EPIPE' ||
+        err.code === 'ECONNRESET' ||
+        err.code === 'ENOTCONN' ||
+        err.code === 'ERR_STREAM_DESTROYED');
     try {
       const messageString = JSON.stringify(message);
       const messageBuffer = Buffer.from(messageString);
@@ -391,15 +401,33 @@ export class NativeMessagingHost {
       // Ensure atomic write
       stdout.write(Buffer.concat([headerBuffer, messageBuffer]), (err) => {
         if (err) {
-          // Consider how to handle write failure, may affect request completion
+          if (isTransientPipeError(err)) {
+            // Expected during Chrome disconnect cycle. Don't propagate.
+            // The connected=false flag + cleanup() already handle disconnect state.
+            return;
+          }
+          // Other write failures: log to stderr (NOT stdout, which is the protocol stream).
+          process.stderr.write(
+            '[bridge] sendMessage write error: ' +
+              (err.message || String(err)) +
+              String.fromCharCode(10),
+          );
         } else {
           // Message sent successfully, no action needed
         }
       });
     } catch (error: any) {
+      if (isTransientPipeError(error)) {
+        // Same rationale as the write callback above.
+        return;
+      }
       // Catch JSON.stringify or Buffer operation errors
       // If preparation stage fails, associated request may never be sent
-      // Need to consider whether to reject corresponding Promise (if called within sendRequestToExtensionAndWait)
+      process.stderr.write(
+        '[bridge] sendMessage error: ' +
+          (error?.message || String(error)) +
+          String.fromCharCode(10),
+      );
     }
   }
 

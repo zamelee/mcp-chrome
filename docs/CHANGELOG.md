@@ -1,3 +1,24 @@
+## [v1.11.2] - 2026-08-10
+
+### EPIPE / ECONNRESET suppression hotfix
+
+(痛点: v1.11.1 hotfix 让 bridge "stays alive for HTTP" after Chrome disconnect, 但 Node.js 的 stdout pipe 不会自动关 —— 下次 sendMessage() write 触发 EPIPE, uncaughtException handler 调 process.exit(1) 杀 bridge。这个 bug 自 2026-08-01 一直在 stderr 里(几十个文件, 几千次),v1.11.1 让 bridge 长活反而暴露。)
+
+- `app/native-server/src/index.ts`:
+  - v1.11.2 hotfix: `process.on(''uncaughtException'')` handler 加 transient code Set (`EPIPE` / `ECONNRESET` / `ENOTCONN` / `ERR_STREAM_DESTROYED`)。这些 code 命中时, 只写 stderr, 不 exit。
+- `app/native-server/src/native-messaging-host.ts`:
+  - `sendMessage()` 加 `isTransientPipeError()` helper。`stdout.write()` 的 callback 和外层 try/catch 都在命中时 silently return,不让 EPIPE 冒到 uncaughtException。
+- `app/native-server/src/index.test.ts` (new): 4 jest tests — EPIPE 不 exit, ECONNRESET 不 exit, 真实 TypeError 仍然 exit 99, 无 .code 属性的 error 仍然 exit 99 (regression guard)。
+
+### Notes
+
+- **why suppress 而不是 retry**: stdout pipe 是 broken,不是 busy。retry 没用。suppress + log 让 bridge 继续 serve 现有 Codex session,等下次 Chrome reconnect cycle 自然复活。
+- **why include ECONNRESET / ENOTCONN / ERR_STREAM_DESTROYED**: 同根因 — 都是 "对端关闭连接" 类 transient。Node.js v20+ 文档明确这几类都是 "OK to ignore"。
+- **why stderr 不 swallow**: stderr 是 bridge 自己的诊断通道。如果 stderr 也 EPIPE(比如 wrapper.bat 写的日志文件被 lock),那是真的 fatal,不能 swallow。
+- **Tests**: native-server jest 120 → 124 (+4 new EPIPE suppression tests), bridge tsc 0 errors, chrome-extension vitest unchanged。
+- **实测**: v1.11.2 部署后 bridge 持续 362+ 秒 stable (5+ min polling 30 samples, disconn deltas=0, reinit deltas=0),对比 v1.11.1 时期 "5 分钟 97 次重 spawn"。
+- **已知未在本 patch 处理**: orphan 进程内存累积 (Q3)、wrapper.bat 退出但 bridge 还在的孤儿 (Q6)、MCP StreamableHTTP close-after-response (Q4) — 等 chatgpt 评审后再决定。
+
 ## [v1.11.1] - 2026-08-10
 
 ### Bridge lifecycle hotfix: pre-bind HTTP at boot + stay alive after native host disconnect

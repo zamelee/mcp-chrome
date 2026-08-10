@@ -39,7 +39,19 @@ process.on('SIGTERM', () => {
 
 process.on('exit', (code) => {});
 
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', (error: any) => {
+  // v1.11.2 hotfix: EPIPE / ECONNRESET on closed native host pipe 是 v1.11.1+ lifecycle
+  // 预期副产物. Chrome 关 stdio 后 stdout 仍指向 broken pipe, 下次 sendMessage write
+  // 触发 EPIPE. 这种 transient pipe error 不应该把整个 bridge 杀掉.
+  // 同样 swallow: ECONNRESET (Win32: 目标方关闭连接), ENOTCONN (socket 未连接),
+  // ERR_STREAM_DESTROYED (Node stream 已 destroyed).
+  const transientCodes = new Set(['EPIPE', 'ECONNRESET', 'ENOTCONN', 'ERR_STREAM_DESTROYED']);
+  if (error && transientCodes.has(error.code)) {
+    process.stderr.write(
+      '[bridge] suppressed ' + error.code + ': ' + String(error.message) + String.fromCharCode(10),
+    );
+    return; // 不 exit, 让 bridge 继续 serve HTTP
+  }
   process.stderr.write('[bridge] uncaught=' + String(error) + String.fromCharCode(10));
   process.exit(1);
 });
